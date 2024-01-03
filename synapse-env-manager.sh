@@ -54,7 +54,7 @@ fi
 # Create admin account
 if [ "$1" == "admin" ]; then
     docker exec \
-        synapse \
+        synapse-docker-synapse-1 \
         /bin/bash \
         -c "register_new_matrix_user \
             --admin \
