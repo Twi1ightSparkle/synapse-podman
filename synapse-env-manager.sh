@@ -102,6 +102,9 @@ fi
 # Generate Element Web config if not present
 [[ ! -f "$elementConfigFile" ]] && cat <<EOT >> "$elementConfigFile"
 {
+    "bug_report_endpoint_url": "https://element.io/bugreports/submit",
+    "default_country_code": "US",
+    "default_federate": true,
     "default_server_config": {
         "m.homeserver": {
             "base_url": "http://$serverName",
@@ -111,12 +114,18 @@ fi
             "base_url": "https://vector.im"
         }
     },
+    "default_theme": "dark",
+    "disable_3pid_login": false,
     "disable_custom_urls": false,
     "disable_guests": false,
     "disable_login_language_selector": false,
-    "disable_3pid_login": false,
-    "integrations_ui_url": "https://scalar.vector.im/",
+    "element_call": {
+        "brand": "Element Call",
+        "participant_limit": 8,
+        "url": "https://call.element.io"
+    },
     "integrations_rest_url": "https://scalar.vector.im/api",
+    "integrations_ui_url": "https://scalar.vector.im/",
     "integrations_widgets_urls": [
         "https://scalar.vector.im/_matrix/integrations/v1",
         "https://scalar.vector.im/api",
@@ -124,21 +133,31 @@ fi
         "https://scalar-staging.vector.im/api",
         "https://scalar-staging.riot.im/scalar/api"
     ],
-    "bug_report_endpoint_url": "https://element.io/bugreports/submit",
-    "defaultCountryCode": "US",
-    "showLabsSettings": true,
-    "default_federate": true,
-    "default_theme": "dark",
-    "roomDirectory": {
-        "servers": ["matrix.org"]
-    },
-    "enable_presence_by_hs_url": {
-        "https://matrix.org": false,
-        "https://matrix-client.matrix.org": false
-    },
     "jitsi": {
-        "preferredDomain": "meet.element.io"
-    }
+        "preferred_domain": "meet.element.io"
+    },
+    "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=fU3vlMsMn4Jb6dnEIFsx",
+    "roomDirectory": {
+        "servers": [
+            "$serverName"
+        ]
+    },
+    "setting_defaults": {
+        "FTUE.userOnboardingButton": false,
+        "MessageComposerInput.ctrlEnterToSend": true,
+        "UIFeature.Feedback": false,
+        "UIFeature.advancedSettings": true,
+        "UIFeature.shareSocial": false,
+        "alwaysShowTimestamps": true,
+        "automaticErrorReporting": false,
+        "ctrlFForSearch": true,
+        "developerMode": true,
+        "dontSendTypingNotifications": true,
+        "sendReadReceipts": false,
+        "sendTypingNotifications": false,
+        "showChatEffects": false
+    },
+    "show_labs_settings": true
 }
 EOT
 
