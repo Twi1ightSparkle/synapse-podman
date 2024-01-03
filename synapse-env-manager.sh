@@ -216,7 +216,7 @@ services:
       - 127.0.0.1:$synapsePort:$synapsePort/tcp
     #   - 127.0.0.1:$synapsePort-8449:$synapsePort-8449/tcp
   postgres:
-    image: docker.io/postgres:12-alpine
+    image: docker.io/postgres:16
     restart: unless-stopped
     environment:
       - POSTGRES_USER=synapse
