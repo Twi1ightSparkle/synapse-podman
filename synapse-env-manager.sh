@@ -169,7 +169,7 @@ EOT
         --rm \
         --tty \
         --volume "$synapseData":/data \
-        "ghcr.io/matrix-org/synapse:$synapseVersion" \
+        "ghcr.io/element-hq/synapse:$synapseVersion" \
         -c "python3 -m synapse.app.homeserver \
             --config-path /data/homeserver.yaml \
             --data-directory /data \
@@ -202,7 +202,7 @@ cat <<EOT > "$dockerComposeFile"
 version: "3"
 services:
   synapse:
-    image: ghcr.io/matrix-org/synapse:$synapseVersion
+    image: ghcr.io/element-hq/synapse:$synapseVersion
     restart: unless-stopped
     environment:
       - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
