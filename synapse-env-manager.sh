@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Quickly spin up a Synapse + Postgres in docker for testing.
-# Copyright (C) 2023  Twilight Sparkle
+# Copyright (C) 2024  Twilight Sparkle
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
