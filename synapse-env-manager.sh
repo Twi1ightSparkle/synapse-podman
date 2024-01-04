@@ -20,6 +20,28 @@ scriptPath="$(readlink -f "$0")"
 workDir="$(dirname "$scriptPath")"
 configFile="$workDir/config.env"
 
+function help {
+    cat <<EOT
+Usage: $scriptPath <option>
+
+Options:
+    admin:      Create Synapse admin account (username: admin. password: admin).
+    delete:     Delete the environment, Synapse/Postgres data, and config files.
+    gendock:    Regenerate the Docker Compose file.
+    genele:     Regenerate the Element Web config file.
+    gensyn:     Regenerate the Synapse config and log config files.
+    help:       This help text.
+    restartall: Restart all containers.
+    restartele: Restart the Element Web container.
+    restartsyn: Restart the Synapse container.
+    setup:      Create, edit, (re)start the environment.
+    stop:       Stop the environment without deleting it.
+
+Note: restartall and setup will recreate all containers and remove orphaned
+containers. Synapse/Postgres data is not deleted.
+EOT
+}
+
 # Load config
 if [ ! -f "$configFile" ]; then
     echo "Unable to load config file $configFile"
@@ -27,6 +49,7 @@ if [ ! -f "$configFile" ]; then
 fi
 source "$configFile"
 
+# This variable needs to be exported so it can be used with yq
 export synapsePortEnv="$synapsePort"
 
 # Vars
@@ -38,21 +61,28 @@ logConfigFile="$synapseData/localhost:$synapsePort.log.config"
 synapseConfigFile="$synapseData/homeserver.yaml"
 dockerComposeFile="$workDir/docker-compose.yaml"
 
-# Check for required programs
-programs=(bash docker docker-compose yq)
-missing=""
-for program in "${programs[@]}"; do
-    if ! hash "$program" &>/dev/null; then
-         missing+="\n- $program"
+# Check that required programs are installed on the system
+function checkRequiredPrograms {
+    programs=(bash docker docker-compose yq)
+    missing=""
+    for program in "${programs[@]}"; do
+        if ! hash "$program" &>/dev/null; then
+            missing+="\n- $program"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        echo -e "Required programs are missing on this system. Please install:$missing"
+        exit 1
     fi
-done
-if [ -n "$missing" ]; then
-    echo -e "Required programs are missing on this system. Please install:$missing"
-    exit 1
-fi
+}
 
-# Create admin account
-if [ "$1" == "admin" ]; then
+# Check for required directories
+function checkRequiredDirectories {
+    [[ ! -d "$synapseData" ]] && mkdir "$synapseData"
+}
+
+# Create Synapse admin account
+function createAdminAccount {
     docker exec \
         synapse-docker-synapse-1 \
         /bin/bash \
@@ -62,47 +92,90 @@ if [ "$1" == "admin" ]; then
             --password admin \
             --user admin"
     exit 0
-fi
+}
 
 # Delete the environment
-if [ "$1" == "delete" ]; then
-    read -rp "Enter YES to confirm detleting the environment and the data and postgres directories: " verification
+function deleteEnvironment {
+    msg="Enter YES to confirm deleting the environment and the directories/files postgres, synapse, docker-compose.yaml, and elementConfig.json: "
+    read -rp "$msg" verification
     [[ "$verification" != "YES" ]] && exit 0
     docker-compose down --remove-orphans
-    rm -rf "$elementConfigFile"
-    rm -rf "$synapseData"
-    rm -rf "$dockerComposeFile"
-    rm -rf "$postgresData"
-    exit 0
-fi
+    [ -f "$dockerComposeFile" ] && rm -rf "$dockerComposeFile"
+    [ -f "$elementConfigFile" ] && rm -rf "$elementConfigFile"
+    [ -f "$postgresData" ] && rm -rf "$postgresData"
+    [ -f "$synapseData" ] && rm -rf "$synapseData"
+}
 
-# Stop the environment
-if [ "$1" == "stop" ]; then
-    docker-compose stop
-    exit 0
-fi
+# Create the docker-compose file or ask to overwrite
+function generateDockerCompose {
+    synapseAdditionalVolumesYaml=""
+    for volume in "${synapseAdditionalVolumes[@]}"; do
+        synapseAdditionalVolumesYaml+="
+      - $volume"
+    done
 
-# Any invalid option
-if [ "$1" != "setup" ]; then
-    cat <<EOT
-Usage: $scriptPath <option>
+    [[ -f "$dockerComposeFile" ]] && read -rp "Overwrite $dockerComposeFile? [y/N]: " verification
+    [ "$verification" == "y" ] || [[ ! -f "$dockerComposeFile" ]] && cat <<EOT > "$dockerComposeFile"
+# This file is managed by $scriptPath
+version: "3"
+services:
+  synapse:
+    image: $synapseImage
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+    ports:
+      - 127.0.0.1:8008-8009:8008-8009/tcp
+      - 127.0.0.1:$synapsePort:$synapsePort/tcp
+    volumes:
+      - $synapseData:/data$synapseAdditionalVolumesYaml
 
-Options:
-    admin: Create admin account (username: admin. password: admin)
-    delete: Delete the environment
-    setup: Create, edit, (re)start the environment
-    stop: Stop the environment without deleting it
+  postgres:
+    image: docker.io/postgres:16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_USER=synapse
+    ports:
+      - 127.0.0.1:$portgresPort:5432/tcp
+    volumes:
+      - $postgresData:/var/lib/postgresql/data
 EOT
-  exit 0
-fi
 
-# Check for required directories
-[[ ! -d "$synapseData" ]] && mkdir "$synapseData"
+    [ "$enableAdminer" == true ] && [ "$verification" == "y" ] && cat <<EOT >> "$dockerComposeFile"
 
-# Generate Element Web config if not present
-[[ ! -f "$elementConfigFile" ]] && cat <<EOT >> "$elementConfigFile"
+  adminer:
+    image: docker.io/adminer:latest
+    restart: unless-stopped
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    ports:
+      - 127.0.0.1:$adminerPort:8080/tcp
+EOT
+
+    [ "$enableElementWeb" == true ] && [ "$verification" == "y" ] && cat <<EOT >> "$dockerComposeFile"
+
+  elementweb:
+    image: $elementImage
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:$elementPort:80/tcp
+    volumes:
+      - $elementConfigFile:/app/config.json:ro
+EOT
+}
+
+# Generate Element Web config if not present or ask to overwrite
+function generateElementConfig {
+    [[ -f "$elementConfigFile" ]] && read -rp "Overwrite $elementConfigFile? [y/N]: " verification
+    [ "$verification" == "y" ] || [[ ! -f "$elementConfigFile" ]] && cat <<EOT > "$elementConfigFile"
 {
+    "synapse-docker_notice": "This file is managed by $scriptPath",
     "bug_report_endpoint_url": "https://element.io/bugreports/submit",
+    "dangerously_allow_unsafe_and_insecure_passwords": true,
     "default_country_code": "US",
     "default_federate": true,
     "default_server_config": {
@@ -160,100 +233,90 @@ fi
     "show_labs_settings": true
 }
 EOT
+}
 
-# Generate Synapse config if not present
-[[ ! -f "$synapseConfigFile" ]] && \
-    docker run \
-        --entrypoint "/bin/bash" \
-        --interactive \
-        --rm \
-        --tty \
-        --volume "$synapseData":/data \
-        "ghcr.io/element-hq/synapse:$synapseVersion" \
-        -c "python3 -m synapse.app.homeserver \
-            --config-path /data/homeserver.yaml \
-            --data-directory /data \
-            --generate-config \
-            --report-stats no \
-            --server-name $serverName"
+# Generate Synapse config if not present or ask to overwrite
+function generateSynapseConfig {
+    [[ -f "$synapseConfigFile" ]] || [[ -f "$logConfigFile" ]] && \
+        read -rp "Overwrite $synapseConfigFile and $logConfigFile? [y/N]: " verification
+    if [ "$verification" == "y" ] || [[ ! -f "$synapseConfigFile" ]]; then
+        [ -f "$synapseConfigFile" ] && rm "$synapseConfigFile"
+        [ -f "$logConfigFile" ] && rm "$logConfigFile"
 
-# Customize Synapse config
-yq -i '.handlers.file.filename = "/data/homeserver.log"' "$logConfigFile"
-yq -i '
-    .listeners[0].port = env(synapsePortEnv) |
-    .database.name = "psycopg2" |
-    .database.args.user = "synapse" |
-    .database.args.password = "password" |
-    .database.args.database = "synapse" |
-    .database.args.host = "postgres" |
-    .database.args.cp_min = 5 |
-    .database.args.cp_max = 10 |
-    .trusted_key_servers[0].accept_keys_insecurely = true |
-    .suppress_key_server_warning = true |
-    .enable_registration = true |
-    .enable_registration_without_verification = true |
-    .presence.enabled = false
-' "$synapseConfigFile"
-yq -i 'del(.listeners[0].bind_addresses[0])' "$synapseConfigFile"
+        docker run \
+            --entrypoint "/bin/bash" \
+            --interactive \
+            --rm \
+            --tty \
+            --volume "$synapseData":/data \
+            "$synapseImage" \
+            -c "python3 -m synapse.app.homeserver \
+                --config-path /data/homeserver.yaml \
+                --data-directory /data \
+                --generate-config \
+                --report-stats no \
+                --server-name $serverName"
 
-# Create docker-compose file
-additionalSynapseVolumes=""
-for volume in "${synapseAdditionalVolumes[@]}"; do
-    additionalSynapseVolumes+="      - $volume
-"
-done
-
-cat <<EOT > "$dockerComposeFile"
-# Do NOT edit this file. It's managed by $scriptPath
-version: "3"
-services:
-  synapse:
-    image: ghcr.io/element-hq/synapse:$synapseVersion
-    restart: unless-stopped
-    environment:
-      - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
-    volumes:
-      - $synapseData:/data
-$additionalSynapseVolumes
-    depends_on:
-      - postgres
-    ports:
-    #   - 127.0.0.1:8008-8009:8008-8009/tcp
-    #   - 127.0.0.1:8008-8009:8008-8009/tcp
-      - 127.0.0.1:$synapsePort:$synapsePort/tcp
-    #   - 127.0.0.1:$synapsePort-8449:$synapsePort-8449/tcp
-  postgres:
-    image: docker.io/postgres:16
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=synapse
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
-    volumes:
-      - $postgresData:/var/lib/postgresql/data
-    ports:
-      - 127.0.0.1:$portgresPort:5432/tcp
-EOT
-
-[ "$enableAdminer" == true ] && cat <<EOT >> "$dockerComposeFile"
-  adminer:
-    image: docker.io/adminer:latest
-    restart: unless-stopped
-    environment:
-      - ADMINER_DEFAULT_SERVER=postgres
-    ports:
-      - 127.0.0.1:$adminerPort:8080/tcp
-EOT
-
-[ "$enableElementWeb" == true ] && cat <<EOT >> "$dockerComposeFile"
-  elementweb:
-    image: vectorim/element-web:$elementVersion
-    restart: unless-stopped
-    volumes:
-      - $elementConfigFile:/app/config.json:ro
-    ports:
-      - 127.0.0.1:$elementPort:80/tcp
-EOT
+        # Customize Synapse config
+        yq -i '.handlers.file.filename = "/data/homeserver.log"' "$logConfigFile"
+        yq -i 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
+        yq -i '
+            .listeners[0].bind_addresses[0] = "0.0.0.0" |
+            .listeners[0].port = env(synapsePortEnv) |
+            .database.name = "psycopg2" |
+            .database.args.user = "synapse" |
+            .database.args.password = "password" |
+            .database.args.database = "synapse" |
+            .database.args.host = "postgres" |
+            .database.args.cp_min = 5 |
+            .database.args.cp_max = 10 |
+            .trusted_key_servers[0].accept_keys_insecurely = true |
+            .suppress_key_server_warning = true |
+            .enable_registration = true |
+            .enable_registration_without_verification = true |
+            .presence.enabled = false
+        ' "$synapseConfigFile"
+    fi
+}
 
 # Create/Start/Restart comtainers
-docker-compose up --detach --force-recreate --remove-orphans
+function restartAll {
+    docker-compose up --detach --force-recreate --remove-orphans
+}
+
+# Restart the Element Web container
+function restartElement {
+    docker restart synapse-docker-elementweb-1
+}
+
+# Restart the Synapse container
+function restartSynapse {
+    docker restart synapse-docker-synapse-1
+}
+
+# Stop the environment
+function stopEnvironment {
+    docker-compose stop
+}
+
+checkRequiredPrograms
+checkRequiredDirectories
+
+case $1 in
+    admin)      createAdminAccount      ;;
+    delete)     deleteEnvironment       ;;
+    gendock)    generateDockerCompose   ;;
+    genele)     generateElementConfig   ;;
+    gensyn)     generateSynapseConfig   ;;
+    restartall) restartAll              ;;
+    restartele) restartElement          ;;
+    restartsyn) restartSynapse          ;;
+    setup)
+        generateDockerCompose
+        generateElementConfig
+        generateSynapseConfig
+        restartAll
+        ;;
+    stop)       stopEnvironment         ;;
+    *)          help                    ;;
+esac
