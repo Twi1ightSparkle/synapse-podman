@@ -102,8 +102,8 @@ function deleteEnvironment {
     docker-compose down --remove-orphans
     [ -f "$dockerComposeFile" ] && rm -rf "$dockerComposeFile"
     [ -f "$elementConfigFile" ] && rm -rf "$elementConfigFile"
-    [ -f "$postgresData" ] && rm -rf "$postgresData"
-    [ -f "$synapseData" ] && rm -rf "$synapseData"
+    [ -d "$postgresData" ] && rm -rf "$postgresData"
+    [ -d "$synapseData" ] && rm -rf "$synapseData"
 }
 
 # Create the docker-compose file or ask to overwrite
