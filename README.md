@@ -24,7 +24,7 @@ Options:
 ```
 
 The directories `postgres` and `synapse` and the files `docker-compose.yaml` and `elementConfig.json` will be created in
-the directory where the `synapse-env-manager.sh` script is placed. If these already exists, you will loose data stored
+the directory where the `synapse-env-manager.sh` script is placed. If these already exists, you may loose data stored
 in them.
 
 It will take a minute after you create the database for Synapse to start properly as it restarts a few times while
@@ -36,5 +36,5 @@ Use Element Web on <http://localhost:10000> or any Matrix client to access Synap
 ## Adminer
 
 You can optionally set up [Adminer](https://www.adminer.org/) to manage Postgres from your browser. If you enabled this,
-the Adminer web ui is accessible at <http://localhost:8080/>. System: `PostgreSQL`. Server: `postgres`.
+the Adminer web ui is accessible at <http://localhost:10001/>. System: `PostgreSQL`. Server: `postgres`.
 Username/Database: `synapse`. Password: `password`.
