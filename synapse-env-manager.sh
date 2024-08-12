@@ -1,6 +1,7 @@
 #!/bin/bash
+# shellcheck source=/dev/null
 
-# Quickly spin up a Synapse + Postgres in docker for testing.
+# Quickly spin up a Synapse + Postgres in Podman for testing.
 # Copyright (C) 2024  Twilight Sparkle
 #
 # This program is free software: you can redistribute it and/or modify
@@ -17,8 +18,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 scriptPath="$(readlink -f "$0")"
-workDir="$(dirname "$scriptPath")"
-configFile="$workDir/config.env"
+workDirFullPath="$(dirname "$scriptPath")"
+workDirBaseName="$(basename "$workDirFullPath")"
+configFile="$workDirFullPath/config.env"
 
 function help {
     cat <<EOT
@@ -27,43 +29,52 @@ Usage: $scriptPath <option>
 Options:
     admin:      Create Synapse admin account (username: admin. password: admin).
     delete:     Delete the environment, Synapse/Postgres data, and config files.
-    gendock:    Regenerate the Docker Compose file.
+    gencom:     Regenerate the Podman Compose file.
     genele:     Regenerate the Element Web config file.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
-    restartall: Restart all containers.
-    restartele: Restart the Element Web container.
-    restartsyn: Restart the Synapse container.
+    rsa:        Restart all containers.
+    rse:        Restart the Element Web container.
+    rss:        Restart the Synapse container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
 
-Note: restartall and setup will recreate all containers and remove orphaned
+Note: rsa and setup will recreate all containers and remove orphaned
 containers. Synapse/Postgres data is not deleted.
 EOT
 }
 
 # Load config
-if [ ! -f "$configFile" ]; then
-    echo "Unable to load config file $configFile"
-    exit 1
+if [ -f "$configFile" ]; then
+    source "$configFile"
+else
+    synapseImage="ghcr.io/element-hq/synapse:latest"
+    synapsePort=8448
+    synapseAdditionalVolumes=""
+    postgresImage="docker.io/postgres:latest"
+    portgresPort=5432
+    enableAdminer=true
+    adminerImage="docker.io/adminer:latest"
+    adminerPort=10001
+    enableElementWeb=true
+    elementImage="vectorim/element-web:latest"
+    elementPort=10000
 fi
-source "$configFile"
 
 # This variable needs to be exported so it can be used with yq
 export synapsePortEnv="$synapsePort"
 
 # Vars
+synapseData="$workDirFullPath/synapse"
+composeFile="$workDirFullPath/compose.yml"
+elementConfigFile="$workDirFullPath/elementConfig.json"
 serverName="localhost:$synapsePort"
-synapseData="$workDir/synapse"
-postgresData="$workDir/postgres"
-elementConfigFile="$workDir/elementConfig.json"
-logConfigFile="$synapseData/localhost:$synapsePort.log.config"
 synapseConfigFile="$synapseData/homeserver.yaml"
-dockerComposeFile="$workDir/docker-compose.yaml"
+synapseLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
 
 # Check that required programs are installed on the system
 function checkRequiredPrograms {
-    programs=(bash docker docker-compose yq)
+    programs=(bash podman yq)
     missing=""
     for program in "${programs[@]}"; do
         if ! hash "$program" &>/dev/null; then
@@ -76,15 +87,30 @@ function checkRequiredPrograms {
     fi
 }
 
-# Check for required directories
+# Set Podman namespace permissions
+function podmanPermissions {
+    path="$1"
+    ownerId="$2"
+    podman unshare find "$path" -type d -exec chmod 775 {} +
+    podman unshare find "$path" -type f -exec chmod 664 {} +
+    podman unshare chown "$ownerId" -R "$path"
+}
+
+# Check for required directories and set permissions for Synapse
 function checkRequiredDirectories {
-    [[ ! -d "$synapseData" ]] && mkdir "$synapseData"
+    [[ ! -d "$synapseData" ]] &&
+        mkdir "$synapseData" &&
+        podmanPermissions "$synapseData" "991"
+
+    for volume in "${synapseAdditionalVolumes[@]}"; do
+        podmanPermissions "$volume" "991"
+    done
 }
 
 # Create Synapse admin account
 function createAdminAccount {
-    docker exec \
-        synapse-docker-synapse-1 \
+    podman exec \
+        "$workDirBaseName-synapse-1" \
         /bin/bash \
         -c "register_new_matrix_user \
             --admin \
@@ -96,28 +122,38 @@ function createAdminAccount {
 
 # Delete the environment
 function deleteEnvironment {
-    msg="Enter YES to confirm deleting the environment and the directories/files postgres, synapse, docker-compose.yaml, and elementConfig.json: "
+    msg="Enter YES to confirm deleting the environment, Postgres volume, and the directories/files synapse/, "
+    msg+="compose.yml, and elementConfig.json: "
     read -rp "$msg" verification
     [[ "$verification" != "YES" ]] && exit 0
-    docker-compose down --remove-orphans
-    [ -f "$dockerComposeFile" ] && rm -rf "$dockerComposeFile"
-    [ -f "$elementConfigFile" ] && rm -rf "$elementConfigFile"
-    [ -d "$postgresData" ] && rm -rf "$postgresData"
-    [ -d "$synapseData" ] && rm -rf "$synapseData"
+    podman compose down --remove-orphans
+    podman volume rm "${workDirBaseName}_postgresData"
+    [[ -f "$composeFile" ]] && rm -rf "$composeFile"
+    [[ -f "$elementConfigFile" ]] && rm -rf "$elementConfigFile"
+    [[ -d "$synapseData" ]] && rm -rf "$synapseData"
 }
 
-# Create the docker-compose file or ask to overwrite
-function generateDockerCompose {
+# Create the Podman compose file
+function generatePodmanCompose {
     synapseAdditionalVolumesYaml=""
     for volume in "${synapseAdditionalVolumes[@]}"; do
-        synapseAdditionalVolumesYaml+="
-      - $volume"
+        synapseAdditionalVolumesYaml+="\n      - $volume:Z"
     done
 
-    [[ -f "$dockerComposeFile" ]] && read -rp "Overwrite $dockerComposeFile? [y/N]: " verification
-    [ "$verification" == "y" ] || [[ ! -f "$dockerComposeFile" ]] && cat <<EOT > "$dockerComposeFile"
+    # We need $verification 
+    if [[ -f "$composeFile" ]]; then
+         read -rp "Overwrite $composeFile? [y/N]: " verification
+    else
+        verification=y
+    fi
+
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ ! -f "$composeFile" ]] || [[ "$verification" == "y" ]] && cat <<EOT > "$composeFile"
 # This file is managed by $scriptPath
-version: "3"
+
+volumes:
+    postgresData:
+
 services:
   synapse:
     image: $synapseImage
@@ -130,10 +166,10 @@ services:
       - 127.0.0.1:8008-8009:8008-8009/tcp
       - 127.0.0.1:$synapsePort:$synapsePort/tcp
     volumes:
-      - $synapseData:/data$synapseAdditionalVolumesYaml
+      - $synapseData:/data:Z$synapseAdditionalVolumesYaml
 
   postgres:
-    image: docker.io/postgres:16
+    image: $postgresImage
     restart: unless-stopped
     environment:
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
@@ -142,13 +178,14 @@ services:
     ports:
       - 127.0.0.1:$portgresPort:5432/tcp
     volumes:
-      - $postgresData:/var/lib/postgresql/data
+      - postgresData:/var/lib/postgresql/data
 EOT
 
-    [ "$enableAdminer" == true ] && [ "$verification" == "y" ] && cat <<EOT >> "$dockerComposeFile"
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableAdminer" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
 
   adminer:
-    image: docker.io/adminer:latest
+    image: $adminerImage
     restart: unless-stopped
     environment:
       - ADMINER_DEFAULT_SERVER=postgres
@@ -156,7 +193,8 @@ EOT
       - 127.0.0.1:$adminerPort:8080/tcp
 EOT
 
-    [ "$enableElementWeb" == true ] && [ "$verification" == "y" ] && cat <<EOT >> "$dockerComposeFile"
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableElementWeb" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
 
   elementweb:
     image: $elementImage
@@ -164,16 +202,18 @@ EOT
     ports:
       - 127.0.0.1:$elementPort:80/tcp
     volumes:
-      - $elementConfigFile:/app/config.json:ro
+        - $elementConfigFile:/app/config.json:Z
 EOT
 }
 
 # Generate Element Web config if not present or ask to overwrite
 function generateElementConfig {
     [[ -f "$elementConfigFile" ]] && read -rp "Overwrite $elementConfigFile? [y/N]: " verification
-    [ "$verification" == "y" ] || [[ ! -f "$elementConfigFile" ]] && cat <<EOT > "$elementConfigFile"
+    
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ ! -f "$elementConfigFile" ]] || [[ "$verification" == "y" ]] && cat <<EOT > "$elementConfigFile"
 {
-    "synapse-docker_notice": "This file is managed by $scriptPath",
+    "${workDirBaseName}_notice": "This file is managed by $scriptPath",
     "bug_report_endpoint_url": "https://element.io/bugreports/submit",
     "dangerously_allow_unsafe_and_insecure_passwords": true,
     "default_country_code": "US",
@@ -194,8 +234,11 @@ function generateElementConfig {
     "disable_login_language_selector": false,
     "element_call": {
         "brand": "Element Call",
-        "participant_limit": 8,
         "url": "https://call.element.io"
+    },
+    "features": {
+        "feature_jump_to_date": true,
+        "feature_state_counters": true
     },
     "integrations_rest_url": "https://scalar.vector.im/api",
     "integrations_ui_url": "https://scalar.vector.im/",
@@ -210,25 +253,25 @@ function generateElementConfig {
         "preferred_domain": "meet.element.io"
     },
     "map_style_url": "https://api.maptiler.com/maps/streets/style.json?key=fU3vlMsMn4Jb6dnEIFsx",
-    "roomDirectory": {
+    "room_directory": {
         "servers": [
             "$serverName"
         ]
     },
     "setting_defaults": {
-        "FTUE.userOnboardingButton": false,
-        "MessageComposerInput.ctrlEnterToSend": true,
-        "UIFeature.Feedback": false,
-        "UIFeature.advancedSettings": true,
-        "UIFeature.shareSocial": false,
         "alwaysShowTimestamps": true,
         "automaticErrorReporting": false,
         "ctrlFForSearch": true,
         "developerMode": true,
         "dontSendTypingNotifications": true,
+        "FTUE.userOnboardingButton": false,
+        "MessageComposerInput.ctrlEnterToSend": true,
         "sendReadReceipts": false,
         "sendTypingNotifications": false,
-        "showChatEffects": false
+        "showChatEffects": false,
+        "UIFeature.advancedSettings": true,
+        "UIFeature.Feedback": false,
+        "UIFeature.shareSocial": false
     },
     "show_labs_settings": true
 }
@@ -237,18 +280,22 @@ EOT
 
 # Generate Synapse config if not present or ask to overwrite
 function generateSynapseConfig {
-    [[ -f "$synapseConfigFile" ]] || [[ -f "$logConfigFile" ]] && \
-        read -rp "Overwrite $synapseConfigFile and $logConfigFile? [y/N]: " verification
-    if [ "$verification" == "y" ] || [[ ! -f "$synapseConfigFile" ]]; then
-        [ -f "$synapseConfigFile" ] && rm "$synapseConfigFile"
-        [ -f "$logConfigFile" ] && rm "$logConfigFile"
+    # Ask the user to overwtie if EITHER the Syanspe config file OR Synapse log config file exists
+    [[ -f "$synapseConfigFile" ]] || [[ -f "$synapseLogConfigFile" ]] && \
+        read -rp "Overwrite $synapseConfigFile and $synapseLogConfigFile? [y/N]: " verification
 
-        docker run \
+    if  [[ ! -f "$synapseConfigFile" ]] || [[ "$verification" == "y" ]]; then
+        # Delete the files so Synapse can re-generate them
+        [[ -f "$synapseConfigFile" ]] && rm "$synapseConfigFile"
+        [[ -f "$synapseLogConfigFile" ]] && rm "$synapseLogConfigFile"
+
+        # Use Synapse's built-in executable to generate default config files
+        podman run \
             --entrypoint "/bin/bash" \
             --interactive \
             --rm \
             --tty \
-            --volume "$synapseData":/data \
+            --volume "$synapseData":/data:Z \
             "$synapseImage" \
             -c "python3 -m synapse.app.homeserver \
                 --config-path /data/homeserver.yaml \
@@ -257,8 +304,10 @@ function generateSynapseConfig {
                 --report-stats no \
                 --server-name $serverName"
 
+        podmanPermissions "$synapseData" "991"
+
         # Customize Synapse config
-        yq -i '.handlers.file.filename = "/data/homeserver.log"' "$logConfigFile"
+        yq -i '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFile"
         yq -i 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
         yq -i '
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
@@ -274,29 +323,32 @@ function generateSynapseConfig {
             .suppress_key_server_warning = true |
             .enable_registration = true |
             .enable_registration_without_verification = true |
-            .presence.enabled = false
+            .presence.enabled = false |
+            .user_directory.enabled = true |
+            .user_directory.search_all_users = true |
+            .user_directory.prefer_local_users = true
         ' "$synapseConfigFile"
     fi
 }
 
 # Create/Start/Restart comtainers
 function restartAll {
-    docker-compose up --detach --force-recreate --remove-orphans
+    podman compose up --detach --force-recreate --remove-orphans
 }
 
 # Restart the Element Web container
 function restartElement {
-    docker restart synapse-docker-elementweb-1
+    podman restart "$workDirBaseName-elementweb-1"
 }
 
 # Restart the Synapse container
 function restartSynapse {
-    docker restart synapse-docker-synapse-1
+    podman restart "$workDirBaseName-synapse-1"
 }
 
 # Stop the environment
 function stopEnvironment {
-    docker-compose stop
+    podman compose stop
 }
 
 checkRequiredPrograms
@@ -305,14 +357,14 @@ checkRequiredDirectories
 case $1 in
     admin)      createAdminAccount      ;;
     delete)     deleteEnvironment       ;;
-    gendock)    generateDockerCompose   ;;
+    gencom)     generatePodmanCompose   ;;
     genele)     generateElementConfig   ;;
     gensyn)     generateSynapseConfig   ;;
-    restartall) restartAll              ;;
-    restartele) restartElement          ;;
-    restartsyn) restartSynapse          ;;
+    rsa)        restartAll              ;;
+    rse)        restartElement          ;;
+    rss)        restartSynapse          ;;
     setup)
-        generateDockerCompose
+        generatePodmanCompose
         generateElementConfig
         generateSynapseConfig
         restartAll

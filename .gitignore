@@ -1,5 +1,5 @@
+compose.yml
 config.env
-docker-compose.yaml
 elementConfig.json
 postgres
 synapse

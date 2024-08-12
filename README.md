@@ -13,23 +13,23 @@ Usage: /path/to/synapse-env-manager.sh <option>
 Options:
     admin:      Create Synapse admin account (username: admin. password: admin).
     delete:     Delete the environment, Synapse/Postgres data, and config files.
-    gendock:    Regenerate the Docker Compose file.
+    gencom:     Regenerate the Podman Compose file.
     genele:     Regenerate the Element Web config file.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
-    restartall: Restart all containers.
-    restartele: Restart the Element Web container.
-    restartsyn: Restart the Synapse container.
+    rsa:        Restart all containers.
+    rse:        Restart the Element Web container.
+    rss:        Restart the Synapse container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
 
-Note: restartall and setup will recreate all containers and remove orphaned
+Note: rsa and setup will recreate all containers and remove orphaned
 containers. Synapse/Postgres data is not deleted.
 ```
 
 ## Setup
 
-Copy `config.example.env` to `config.env` and edit as needed.
+Optionally copy `config.example.env` to `config.env` and edit as needed if you don't want to use defaults.
 
 Install [yq](https://mikefarah.gitbook.io/yq/), docker, and docker-compose if you don't have them.
 
