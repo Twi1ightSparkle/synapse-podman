@@ -50,7 +50,7 @@ if [ -f "$configFile" ]; then
 else
     synapseImage="ghcr.io/element-hq/synapse:latest"
     synapsePort=8448
-    synapseAdditionalVolumes=""
+    synapseAdditionalVolumes=()
     postgresImage="docker.io/postgres:latest"
     portgresPort=5432
     enableAdminer=true
