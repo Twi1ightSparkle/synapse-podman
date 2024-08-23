@@ -33,6 +33,7 @@ Options:
     genele:     Regenerate the Element Web config file.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
+    pull:       Pull all container images.
     rsa:        Restart all containers.
     rse:        Restart the Element Web container.
     rss:        Restart the Synapse container.
@@ -331,6 +332,11 @@ function generateSynapseConfig {
     fi
 }
 
+# Pull all container images
+function pullImages {
+    podman compose pull
+}
+
 # Create/Start/Restart comtainers
 function restartAll {
     podman compose up --detach --force-recreate --remove-orphans
@@ -360,6 +366,7 @@ case $1 in
     gencom)     generatePodmanCompose   ;;
     genele)     generateElementConfig   ;;
     gensyn)     generateSynapseConfig   ;;
+    pull)       pullImages              ;;
     rsa)        restartAll              ;;
     rse)        restartElement          ;;
     rss)        restartSynapse          ;;
