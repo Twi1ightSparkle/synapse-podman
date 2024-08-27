@@ -1,6 +1,6 @@
-# Synapse Docker
+# Synapse Podman
 
-Quickly spin up a Synapse + Postgres in Docker for testing.
+Quickly spin up a Synapse + Postgres in Podman for testing.
 
 **DO NOT USE IN PRODUCTION**
 
@@ -31,11 +31,11 @@ containers. Synapse/Postgres data is not deleted.
 
 Optionally copy `config.example.env` to `config.env` and edit as needed if you don't want to use defaults.
 
-Install [yq](https://mikefarah.gitbook.io/yq/), docker, and docker-compose if you don't have them.
+Install [yq](https://mikefarah.gitbook.io/yq/), podman, and podman-compose if you don't have them.
 
 Run `./synapse-env-manager.sh setup` to generate the environment. This will also generate the needed config files.
 
-The directories `postgres` and `synapse` and the files `docker-compose.yaml` and `elementConfig.json` will be created in
+The directory `synapse` and the files `compose.yaml` and `elementConfig.json` will be created in
 the directory where the `synapse-env-manager.sh` script is placed. If these already exists, you may loose data stored
 in them.
 
@@ -48,5 +48,5 @@ Use Element Web on <http://localhost:10000> or any Matrix client to access Synap
 ## Adminer
 
 You can optionally set up [Adminer](https://www.adminer.org/) to manage Postgres from your browser. If you enabled this,
-the Adminer web ui is accessible at <http://localhost:10001/>. System: `PostgreSQL`. Server: `postgres`.
+the Adminer web UI is accessible at <http://localhost:10001/>. System: `PostgreSQL`. Server: `postgres`.
 Username/Database: `synapse`. Password: `password`.
