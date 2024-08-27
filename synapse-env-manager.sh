@@ -47,7 +47,7 @@ EOT
 }
 
 # Load config
-if [ -f "$configFile" ]; then
+if [[ -f "$configFile" ]]; then
     source "$configFile"
 else
     synapseImage="ghcr.io/element-hq/synapse:latest"
@@ -83,7 +83,7 @@ function checkRequiredPrograms {
             missing+="\n- $program"
         fi
     done
-    if [ -n "$missing" ]; then
+    if [[ -n "$missing" ]]; then
         echo -e "Required programs are missing on this system. Please install:$missing"
         exit 1
     fi
