@@ -335,13 +335,11 @@ function generateSynapseConfig {
 
 # Print links
 function printLinks {
-    cat <<EOT
-Links:
+    links="Links:\n\n- Synapse: http://localhost:$synapsePort/_matrix/static"
+    [[ "$enableElementWeb" == true ]] && links+="\n- Element Web: http://localhost:$elementPort"
+    [[ "$enableAdminer" == true ]] && links+="\n- Adminer: http://localhost:$portgresPort"
 
-- Synapse: http://localhost:$synapsePort/_matrix/static
-- Element Web: http://localhost:$elementPort
-- Adminer: http://localhost:$portgresPort
-EOT
+    echo -e "$links"                
 }
 
 # Pull all container images
