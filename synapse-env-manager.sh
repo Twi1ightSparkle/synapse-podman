@@ -59,7 +59,7 @@ else
     adminerImage="docker.io/adminer:latest"
     adminerPort=10001
     enableElementWeb=true
-    elementImage="vectorim/element-web:latest"
+    elementImage="docker.io/vectorim/element-web:latest"
     elementPort=10000
 fi
 
