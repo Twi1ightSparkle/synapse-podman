@@ -31,7 +31,8 @@ containers. Synapse/Postgres data is not deleted.
 
 Optionally copy `config.example.env` to `config.env` and edit as needed if you don't want to use defaults.
 
-Install [yq](https://mikefarah.gitbook.io/yq/), podman, and podman-compose if you don't have them.
+Install [yq](https://mikefarah.gitbook.io/yq/) version 4.18.1 or later, podman, and podman-compose if you don't have
+them.
 
 Run `./synapse-env-manager.sh setup` to generate the environment. This will also generate the needed config files.
 
