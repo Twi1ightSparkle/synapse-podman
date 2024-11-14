@@ -324,27 +324,28 @@ function generateSynapseConfig {
         mv "$synapseLogConfigFile" "$synapseLogConfigFileYaml"
 
         # Customize Synapse config
-        yq -i '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFileYaml"
-        yq -i 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
-        yq -i '
+        yq --inplace '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFileYaml"
+        yq --inplace 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
+        yq --inplace '
+            .database.args.cp_max = 10 |
+            .database.args.cp_min = 5 |
+            .database.args.database = "synapse" |
+            .database.args.host = "postgres" |
+            .database.args.password = "password" |
+            .database.args.user = "synapse" |
+            .database.name = "psycopg2" |
+            .enable_registration = true |
+            .enable_registration_without_verification = true |
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
             .listeners[0].port = env(synapsePortEnv) |
             .log_config = "/data/localhost:8448.log.config.yaml" |
-            .database.name = "psycopg2" |
-            .database.args.user = "synapse" |
-            .database.args.password = "password" |
-            .database.args.database = "synapse" |
-            .database.args.host = "postgres" |
-            .database.args.cp_min = 5 |
-            .database.args.cp_max = 10 |
-            .trusted_key_servers[0].accept_keys_insecurely = true |
-            .suppress_key_server_warning = true |
-            .enable_registration = true |
-            .enable_registration_without_verification = true |
             .presence.enabled = false |
+            .suppress_key_server_warning = true |
+            .suppress_key_server_warning = true |
+            .trusted_key_servers[0].accept_keys_insecurely = true |
             .user_directory.enabled = true |
-            .user_directory.search_all_users = true |
-            .user_directory.prefer_local_users = true
+            .user_directory.prefer_local_users = true |
+            .user_directory.search_all_users = true
         ' "$synapseConfigFile"
     fi
 }
