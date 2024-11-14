@@ -75,6 +75,8 @@ synapseConfigFile="$synapseData/homeserver.yaml"
 synapseLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
 synapseLogConfigFileYaml="$synapseLogConfigFile.yaml"
 
+composeDash="false"
+
 # Check that required programs are installed on the system
 function checkRequiredPrograms {
     programs=(bash podman yq)
@@ -87,6 +89,10 @@ function checkRequiredPrograms {
     if [[ -n "$missing" ]]; then
         echo -e "Required programs are missing on this system. Please install:$missing"
         exit 1
+    fi
+
+    if hash podman-compose &>/dev/null; then
+        composeDash="true"
     fi
 }
 
@@ -129,7 +135,13 @@ function deleteEnvironment {
     msg+="compose.yml, and elementConfig.json: "
     read -rp "$msg" verification
     [[ "$verification" != "YES" ]] && exit 0
-    podman compose down --remove-orphans
+
+    if [[ "$composeDash" == "true" ]]; then
+        podman-compose down
+    else
+        podman compose down
+    fi
+
     podman volume rm "${workDirBaseName}_postgresData"
     [[ -f "$composeFile" ]] && rm -rf "$composeFile"
     [[ -f "$elementConfigFile" ]] && rm -rf "$elementConfigFile"
@@ -348,12 +360,20 @@ function printLinks {
 
 # Pull all container images
 function pullImages {
-    podman compose pull
+    if [[ "$composeDash" == "true" ]]; then
+        podman-compose pull
+    else
+        podman compose pull
+    fi
 }
 
 # Create/Start/Restart comtainers
 function restartAll {
-    podman compose up --detach --force-recreate --remove-orphans
+    if [[ "$composeDash" == "true" ]]; then
+        podman-compose up --detach --force-recreate
+    else
+        podman compose up --detach --force-recreate --remove-orphans
+    fi
 }
 
 # Restart the Element Web container
@@ -368,7 +388,11 @@ function restartSynapse {
 
 # Stop the environment
 function stopEnvironment {
-    podman compose stop
+    if [[ "$composeDash" == "true" ]]; then
+        podman-compose stop
+    else
+        podman compose stop
+    fi
 }
 
 checkRequiredPrograms
