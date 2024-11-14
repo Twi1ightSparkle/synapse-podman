@@ -73,6 +73,7 @@ elementConfigFile="$workDirFullPath/elementConfig.json"
 serverName="localhost:$synapsePort"
 synapseConfigFile="$synapseData/homeserver.yaml"
 synapseLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
+synapseLogConfigFileYaml="$synapseLogConfigFile.yaml"
 
 # Check that required programs are installed on the system
 function checkRequiredPrograms {
@@ -283,13 +284,13 @@ EOT
 # Generate Synapse config if not present or ask to overwrite
 function generateSynapseConfig {
     # Ask the user to overwtie if EITHER the Syanspe config file OR Synapse log config file exists
-    [[ -f "$synapseConfigFile" ]] || [[ -f "$synapseLogConfigFile" ]] && \
-        read -rp "Overwrite $synapseConfigFile and $synapseLogConfigFile? [y/N]: " verification
+    [[ -f "$synapseConfigFile" ]] || [[ -f "$synapseLogConfigFileYaml" ]] && \
+        read -rp "Overwrite $synapseConfigFile and $synapseLogConfigFileYaml? [y/N]: " verification
 
     if  [[ ! -f "$synapseConfigFile" ]] || [[ "$verification" == "y" ]]; then
         # Delete the files so Synapse can re-generate them
         [[ -f "$synapseConfigFile" ]] && rm "$synapseConfigFile"
-        [[ -f "$synapseLogConfigFile" ]] && rm "$synapseLogConfigFile"
+        [[ -f "$synapseLogConfigFileYaml" ]] && rm "$synapseLogConfigFileYaml"
 
         # Use Synapse's built-in executable to generate default config files
         podman run \
@@ -308,12 +309,15 @@ function generateSynapseConfig {
 
         podmanPermissions "$synapseData" "991"
 
+        mv "$synapseLogConfigFile" "$synapseLogConfigFileYaml"
+
         # Customize Synapse config
-        yq -i '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFile"
+        yq -i '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFileYaml"
         yq -i 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
         yq -i '
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
             .listeners[0].port = env(synapsePortEnv) |
+            .log_config = "/data/localhost:8448.log.config.yaml" |
             .database.name = "psycopg2" |
             .database.args.user = "synapse" |
             .database.args.password = "password" |
