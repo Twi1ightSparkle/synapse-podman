@@ -119,7 +119,7 @@ function checkRequiredDirectories {
 # Create Synapse admin account
 function createAdminAccount {
     podman exec \
-        "$workDirBaseName-synapse-1" \
+        "$workDirBaseName-synapse" \
         /bin/bash \
         -c "register_new_matrix_user \
             --admin \
@@ -171,6 +171,7 @@ volumes:
 
 services:
   synapse:
+    container_name: $workDirBaseName-synapse
     image: $synapseImage
     restart: unless-stopped
     depends_on:
@@ -184,6 +185,7 @@ services:
       - $synapseData:/data:Z$synapseAdditionalVolumesYaml
 
   postgres:
+    container_name: $workDirBaseName-postgres
     image: $postgresImage
     restart: unless-stopped
     environment:
@@ -200,6 +202,7 @@ EOT
     [[ "$enableAdminer" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
 
   adminer:
+    container_name: $workDirBaseName-adminer
     image: $adminerImage
     restart: unless-stopped
     environment:
@@ -212,6 +215,7 @@ EOT
     [[ "$enableElementWeb" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
 
   elementweb:
+    container_name: $workDirBaseName-elementweb
     image: $elementImage
     restart: unless-stopped
     ports:
@@ -379,12 +383,12 @@ function restartAll {
 
 # Restart the Element Web container
 function restartElement {
-    podman restart "$workDirBaseName-elementweb-1"
+    podman restart "$workDirBaseName-elementweb"
 }
 
 # Restart the Synapse container
 function restartSynapse {
-    podman restart "$workDirBaseName-synapse-1"
+    podman restart "$workDirBaseName-synapse"
 }
 
 # Stop the environment
