@@ -71,8 +71,8 @@ composeFile="$workDirFullPath/compose.yml"
 elementConfigFile="$workDirFullPath/elementConfig.json"
 serverName="localhost:$synapsePort"
 synapseConfigFile="$synapseData/homeserver.yaml"
-synapseLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
-synapseLogConfigFileYaml="$synapseLogConfigFile.yaml"
+synapseGeneratedLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
+synapseLogConfigFile="$synapseData/log.config.yaml"
 
 composeDash="false"
 
@@ -299,13 +299,13 @@ EOT
 # Generate Synapse config if not present or ask to overwrite
 function generateSynapseConfig {
     # Ask the user to overwtie if EITHER the Syanspe config file OR Synapse log config file exists
-    [[ -f "$synapseConfigFile" ]] || [[ -f "$synapseLogConfigFileYaml" ]] && \
-        read -rp "Overwrite $synapseConfigFile and $synapseLogConfigFileYaml? [y/N]: " verification
+    [[ -f "$synapseConfigFile" ]] || [[ -f "$synapseLogConfigFile" ]] && \
+        read -rp "Overwrite $synapseConfigFile and $synapseLogConfigFile? [y/N]: " verification
 
     if  [[ ! -f "$synapseConfigFile" ]] || [[ "$verification" == "y" ]]; then
         # Delete the files so Synapse can re-generate them
         [[ -f "$synapseConfigFile" ]] && rm "$synapseConfigFile"
-        [[ -f "$synapseLogConfigFileYaml" ]] && rm "$synapseLogConfigFileYaml"
+        [[ -f "$synapseLogConfigFile" ]] && rm "$synapseLogConfigFile"
 
         # Use Synapse's built-in executable to generate default config files
         podman run \
@@ -324,10 +324,10 @@ function generateSynapseConfig {
 
         podmanPermissions "$synapseData" "991"
 
-        mv "$synapseLogConfigFile" "$synapseLogConfigFileYaml"
+        mv "$synapseGeneratedLogConfigFile" "$synapseLogConfigFile"
 
         # Customize Synapse config
-        yq --inplace '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFileYaml"
+        yq --inplace '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFile"
         yq --inplace 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
         yq --inplace '
             .database.args.cp_max = 10 |
@@ -341,7 +341,7 @@ function generateSynapseConfig {
             .enable_registration_without_verification = true |
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
             .listeners[0].port = env(synapsePortEnv) |
-            .log_config = "/data/localhost:8448.log.config.yaml" |
+            .log_config = "/data/log.config.yaml" |
             .presence.enabled = false |
             .suppress_key_server_warning = true |
             .suppress_key_server_warning = true |
