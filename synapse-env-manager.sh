@@ -371,7 +371,7 @@ function pullImages {
     fi
 }
 
-# Create/Start/Restart comtainers
+# Create/Start/Restart containers
 function restartAll {
     if [[ "$composeDash" == "true" ]]; then
         podman-compose up --detach --force-recreate
