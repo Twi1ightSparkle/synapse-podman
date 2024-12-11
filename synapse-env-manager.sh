@@ -31,18 +31,20 @@ Options:
     delete:     Delete the environment, Synapse/Postgres data, and config files.
     gencom:     Regenerate the Podman Compose file.
     genele:     Regenerate the Element Web config file.
+    genhook:    Regenerate the Hookshot config file.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
     links:      Print links.
     pull:       Pull all container images.
     rsa:        Restart all containers.
     rse:        Restart the Element Web container.
+    rsh:        Restart the Hookshot container.
     rss:        Restart the Synapse container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
 
 Note: rsa and setup will recreate all containers and remove orphaned
-containers. Synapse/Postgres data is not deleted.
+containers. Synapse/Postgres/Hookshot/Redis data is not deleted.
 EOT
 }
 
@@ -61,6 +63,11 @@ EOT
 [[ ! "$enableElementWeb" ]]         && enableElementWeb=true
 [[ ! "$elementImage" ]]             && elementImage="docker.io/vectorim/element-web:latest"
 [[ ! "$elementPort" ]]              && elementPort=10000
+[[ ! "$enableHookshot" ]]           && enableHookshot=false
+[[ ! "$hookshotImage" ]]            && hookshotImage="docker.io/halfshot/matrix-hookshot:latest"
+[[ ! "$redisImage" ]]               && redisImage="docker.io/redis:latest"
+[[ ! "$hookshotWebhooksPort" ]]     && hookshotWebhooksPort=9100
+[[ ! "$hookshotWidgetsPort" ]]      && hookshotWidgetsPort=9102
 
 # This variable needs to be exported so it can be used with yq
 export synapsePortEnv="$synapsePort"
@@ -73,6 +80,10 @@ serverName="localhost:$synapsePort"
 synapseConfigFile="$synapseData/homeserver.yaml"
 synapseGeneratedLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
 synapseLogConfigFile="$synapseData/log.config.yaml"
+hookshotData="$workDirFullPath/hookshot"
+hookshotConfigFile="$hookshotData/config.yml"
+hookshotPasskeyFile="$hookshotData/passkey.pem"
+hookshotRegistrationFile="$hookshotData/registration.yml"
 
 composeDash="false"
 
@@ -111,7 +122,7 @@ function checkRequiredDirectories {
         podmanPermissions "$synapseData" "991"
 
     for volume in "${synapseAdditionalVolumes[@]}"; do
-        podmanPermissions "$volume" "991"
+        [[ -e "$volume" ]] && podmanPermissions "$volume" "991"
     done
 }
 
@@ -130,8 +141,8 @@ function createAdminAccount {
 
 # Delete the environment
 function deleteEnvironment {
-    msg="Enter YES to confirm deleting the environment, Postgres volume, and the directories/files synapse/, "
-    msg+="compose.yml, and elementConfig.json: "
+    msg="Enter YES to confirm deleting the environment, Postgres volume, and the directories/files hookshot/, "
+    msg+="synapse/, compose.yml, and elementConfig.json: "
     read -rp "$msg" verification
     [[ "$verification" != "YES" ]] && exit 0
 
@@ -141,14 +152,21 @@ function deleteEnvironment {
         podman compose down
     fi
 
+    podman volume rm "${workDirBaseName}_hookshotEncryptionData"
     podman volume rm "${workDirBaseName}_postgresData"
+    podman volume rm "${workDirBaseName}_redisData"
     [[ -f "$composeFile" ]] && rm -rf "$composeFile"
     [[ -f "$elementConfigFile" ]] && rm -rf "$elementConfigFile"
+    [[ -d "$hookshotData" ]] && rm -rf "$hookshotData"
     [[ -d "$synapseData" ]] && rm -rf "$synapseData"
 }
 
 # Create the Podman compose file
 function generatePodmanCompose {
+    if [[ "$enableHookshot" == true ]]; then
+        synapseAdditionalVolumes+=("$hookshotRegistrationFile:/appservices/hookshot.yaml")
+    fi
+
     synapseAdditionalVolumesYaml=""
     for volume in "${synapseAdditionalVolumes[@]}"; do
         synapseAdditionalVolumesYaml+="
@@ -167,7 +185,9 @@ function generatePodmanCompose {
 # This file is managed by $scriptPath
 
 volumes:
+    hookshotEncryptionData:
     postgresData:
+    redisData:
 
 services:
   synapse:
@@ -222,6 +242,31 @@ EOT
       - 127.0.0.1:$elementPort:80/tcp
     volumes:
         - $elementConfigFile:/app/config.json:Z
+EOT
+
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableHookshot" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
+
+  hookshot:
+    container_name: $workDirBaseName-hookshot
+    image: $hookshotImage
+    ports:
+      - 127.0.0.1:$hookshotWebhooksPort:$hookshotWebhooksPort
+      - 127.0.0.1:$hookshotWidgetsPort:$hookshotWidgetsPort
+    restart: unless-stopped
+    volumes:
+      - $hookshotData:/data:Z
+      - hookshotEncryptionData:/encryption
+
+  redis:
+    command: redis-server --save 20 1 --loglevel warning
+    container_name: $workDirBaseName-redis
+    image: $redisImage
+    ports:
+      - 127.0.0.1:6379:6379
+    restart: unless-stopped
+    volumes:
+      - redisData:/data
 EOT
 }
 
@@ -297,6 +342,161 @@ function generateElementConfig {
 EOT
 }
 
+# Generate Hookshot Web config if not present or ask to overwrite
+function generateHookshotConfig {
+    msg="Overwrite $hookshotConfigFile and $hookshotRegistrationFile? [y/N]: "
+    [[ -f "$hookshotConfigFile" ]] && read -rp "$msg" verification
+
+    if [[ ! -f "$hookshotConfigFile" ]] || [[ "$verification" == "y" ]]; then
+        ## Cleanup everything and recreate directories
+        [[ -d "$hookshotData" ]] && rm -rf "$hookshotData"
+        mkdir -p "$hookshotData"
+        
+        # Hookshot config file
+        cat <<EOT > "$hookshotConfigFile"
+---
+bot:
+  displayname: Hookshot
+bridge:
+  bindAddress: 0.0.0.0
+  domain: $serverName
+  mediaUrl: http://$serverName
+  port: 9993
+  url: http://synapse:$synapsePort
+cache:
+  redisUri: redis://redis:6379
+encryption:
+  storagePath: /encryption
+feeds:
+  enabled: true
+  pollIntervalSeconds: 600
+  pollTimeoutSeconds: 30
+generic:
+  allowJsTransformationFunctions: true
+  enableHttpGet: false
+  enabled: true
+  outbound: true
+  urlPrefix: http://localhost:$hookshotWebhooksPort/webhook/
+  userIdPrefix: _webhooks_
+  waitForComplete: false
+listeners:
+  - bindAddress: 0.0.0.0
+    port: $hookshotWebhooksPort
+    resources:
+      - webhooks
+  - bindAddress: 0.0.0.0
+    port: 9101
+    resources:
+      - metrics
+  - bindAddress: 0.0.0.0
+    port: $hookshotWidgetsPort
+    resources:
+      - widgets
+logging:
+  colorize: true
+  json: false
+  # Logging settings. You can have a severity debug,info,warn,error
+  level: info
+  timestampFormat: HH:mm:ss:SSS
+metrics:
+  enabled: true
+passFile: /data/passkey.pem
+permissions:
+  - actor: '*'
+    services:
+      - level: admin
+        service: '*'
+widgets:
+  addToAdminRooms: false
+  branding:
+    widgetTitle: Hookshot Configuration
+  disallowedIpRanges: []
+  openIdOverrides:
+    $serverName: http://synapse:$synapsePort
+  publicUrl: http://localhost:$hookshotWidgetsPort/widgetapi/v1/static/
+  roomSetupWidget:
+    addOnInvite: false
+EOT
+
+        # Hookshot registration file
+        cat <<EOT > "$hookshotRegistrationFile"
+---
+as_token: hookshotastoken
+de.sorunome.msc2409.push_ephemeral: true
+hs_token: hookshothstoken
+id: hookshot
+namespaces:
+  rooms: []
+  users:
+    - exclusive: true
+      regex: '@_webhooks_.*:$serverName'
+org.matrix.msc3202: true
+push_ephemeral: true
+rate_limited: false
+sender_localpart: hookshot
+url: http://hookshot:9993
+EOT
+
+        # Hookshot passkey
+        cat <<EOT > "$hookshotPasskeyFile"
+-----BEGIN PRIVATE KEY-----
+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
+KELKb1pj8J/jp5pRp5AtyG2iMwxEKg==
+-----END PRIVATE KEY-----
+EOT
+
+        podmanPermissions "$hookshotData" "991"
+    fi
+}
+
 # Generate Synapse config if not present or ask to overwrite
 function generateSynapseConfig {
     # Ask the user to overwtie if EITHER the Syanspe config file OR Synapse log config file exists
@@ -351,6 +551,15 @@ function generateSynapseConfig {
             .user_directory.prefer_local_users = true |
             .user_directory.search_all_users = true
         ' "$synapseConfigFile"
+
+        if [[ "$enableHookshot" == true ]]; then
+            yq --inplace '
+                .app_service_config_files[0] = "/appservices/hookshot.yaml" |
+                .experimental_features.msc2409_to_device_messages_enabled = true |
+                .experimental_features.msc3202_device_masquerading = true |
+                .experimental_features.msc3202_transaction_extensions = true
+            ' "$synapseConfigFile"
+        fi
     fi
 }
 
@@ -386,6 +595,11 @@ function restartElement {
     podman restart "$workDirBaseName-elementweb"
 }
 
+# Restart the Hookshot container
+function restartHookshot {
+    podman restart "$workDirBaseName-hookshot"
+}
+
 # Restart the Synapse container
 function restartSynapse {
     podman restart "$workDirBaseName-synapse"
@@ -408,15 +622,18 @@ case $1 in
     delete)     deleteEnvironment       ;;
     gencom)     generatePodmanCompose   ;;
     genele)     generateElementConfig   ;;
+    genhook)    generateHookshotConfig  ;;
     gensyn)     generateSynapseConfig   ;;
     links)      printLinks              ;;
     pull)       pullImages              ;;
     rsa)        restartAll              ;;
     rse)        restartElement          ;;
+    rsh)        restartHookshot         ;;
     rss)        restartSynapse          ;;
     setup)
         generatePodmanCompose
         generateElementConfig
+        generateHookshotConfig
         generateSynapseConfig
         pullImages
         restartAll

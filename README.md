@@ -15,30 +15,35 @@ Options:
     delete:     Delete the environment, Synapse/Postgres data, and config files.
     gencom:     Regenerate the Podman Compose file.
     genele:     Regenerate the Element Web config file.
+    genhook:    Regenerate the Hookshot config file.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
+    links:      Print links.
+    pull:       Pull all container images.
     rsa:        Restart all containers.
     rse:        Restart the Element Web container.
+    rsh:        Restart the Hookshot container.
     rss:        Restart the Synapse container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
 
 Note: rsa and setup will recreate all containers and remove orphaned
-containers. Synapse/Postgres data is not deleted.
+containers. Synapse/Postgres/Hookshot/Redis data is not deleted.
 ```
 
 ## Setup
 
-Optionally copy `config.example.env` to `config.env` and edit as needed if you don't want to use defaults.
+Optionally copy `config.example.env` to `config.env` and edit as needed. Any setting not specified in the config file
+will use defaults.
 
 Install [yq](https://mikefarah.gitbook.io/yq/) version 4.18.1 or later, podman, and podman-compose if you don't have
 them.
 
 Run `./synapse-env-manager.sh setup` to generate the environment. This will also generate the needed config files.
 
-The directory `synapse` and the files `compose.yaml` and `elementConfig.json` will be created in
-the directory where the `synapse-env-manager.sh` script is placed. If these already exists, you may loose data stored
-in them.
+The directories `synapse`, and `hookshot` (if enabled) and the files `compose.yaml` and `elementConfig.json` will be
+created in the directory where the `synapse-env-manager.sh` script is placed. If these already exists, you may loose
+data stored in them.
 
 It will take a minute after you create the database for Synapse to start properly as it restarts a few times while
 Postgres initializes the database.
@@ -51,3 +56,8 @@ Use Element Web on <http://localhost:10000> or any Matrix client to access Synap
 You can optionally set up [Adminer](https://www.adminer.org/) to manage Postgres from your browser. If you enabled this,
 the Adminer web UI is accessible at <http://localhost:10001/>. System: `PostgreSQL`. Server: `postgres`.
 Username/Database: `synapse`. Password: `password`.
+
+## Hookshot
+
+You can optionally enable [Hookshot](https://matrix-org.github.io/matrix-hookshot/latest/index.html) by setting
+`enableHookshot=true` in your config.

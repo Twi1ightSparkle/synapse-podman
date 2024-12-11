@@ -1,4 +1,5 @@
 compose.yml
 config.env
 elementConfig.json
+hookshot
 synapse
