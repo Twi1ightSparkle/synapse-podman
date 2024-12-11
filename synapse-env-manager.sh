@@ -55,7 +55,7 @@ EOT
 [[ ! "$synapseAdditionalVolumes" ]] && synapseAdditionalVolumes=()
 [[ ! "$postgresImage" ]]            && postgresImage="docker.io/postgres:latest"
 [[ ! "$portgresPort" ]]             && portgresPort=5432
-[[ ! "$enableAdminer" ]]            && enableAdminer=true
+[[ ! "$enableAdminer" ]]            && enableAdminer=false
 [[ ! "$adminerImage" ]]             && adminerImage="docker.io/adminer:latest"
 [[ ! "$adminerPort" ]]              && adminerPort=10001
 [[ ! "$enableElementWeb" ]]         && enableElementWeb=true
