@@ -47,21 +47,20 @@ EOT
 }
 
 # Load config
-if [[ -f "$configFile" ]]; then
-    source "$configFile"
-else
-    synapseImage="ghcr.io/element-hq/synapse:latest"
-    synapsePort=8448
-    synapseAdditionalVolumes=()
-    postgresImage="docker.io/postgres:latest"
-    portgresPort=5432
-    enableAdminer=true
-    adminerImage="docker.io/adminer:latest"
-    adminerPort=10001
-    enableElementWeb=true
-    elementImage="docker.io/vectorim/element-web:latest"
-    elementPort=10000
-fi
+[[ -f "$configFile" ]] && source "$configFile"
+
+# Set any defaults not specified in the config file
+[[ ! "$synapseImage" ]]             && synapseImage="ghcr.io/element-hq/synapse:latest"
+[[ ! "$synapsePort" ]]              && synapsePort=8448
+[[ ! "$synapseAdditionalVolumes" ]] && synapseAdditionalVolumes=()
+[[ ! "$postgresImage" ]]            && postgresImage="docker.io/postgres:latest"
+[[ ! "$portgresPort" ]]             && portgresPort=5432
+[[ ! "$enableAdminer" ]]            && enableAdminer=true
+[[ ! "$adminerImage" ]]             && adminerImage="docker.io/adminer:latest"
+[[ ! "$adminerPort" ]]              && adminerPort=10001
+[[ ! "$enableElementWeb" ]]         && enableElementWeb=true
+[[ ! "$elementImage" ]]             && elementImage="docker.io/vectorim/element-web:latest"
+[[ ! "$elementPort" ]]              && elementPort=10000
 
 # This variable needs to be exported so it can be used with yq
 export synapsePortEnv="$synapsePort"
