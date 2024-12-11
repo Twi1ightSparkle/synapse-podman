@@ -1,5 +1,4 @@
 compose.yml
 config.env
 elementConfig.json
-postgres
 synapse
