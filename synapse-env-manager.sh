@@ -151,7 +151,8 @@ function deleteEnvironment {
 function generatePodmanCompose {
     synapseAdditionalVolumesYaml=""
     for volume in "${synapseAdditionalVolumes[@]}"; do
-        synapseAdditionalVolumesYaml+="\n      - $volume:Z"
+        synapseAdditionalVolumesYaml+="
+      - $volume:Z"
     done
 
     # We need $verification 
