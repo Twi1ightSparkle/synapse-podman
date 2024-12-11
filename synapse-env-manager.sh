@@ -418,6 +418,7 @@ case $1 in
         generatePodmanCompose
         generateElementConfig
         generateSynapseConfig
+        pullImages
         restartAll
         ;;
     stop)       stopEnvironment         ;;
