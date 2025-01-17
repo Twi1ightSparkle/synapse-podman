@@ -238,8 +238,10 @@ EOT
     container_name: $workDirBaseName-elementweb
     image: $elementImage
     restart: unless-stopped
+    environment:
+      - ELEMENT_WEB_PORT=8080
     ports:
-      - 127.0.0.1:$elementPort:80/tcp
+      - 127.0.0.1:$elementPort:8080/tcp
     volumes:
         - $elementConfigFile:/app/config.json:Z
 EOT
