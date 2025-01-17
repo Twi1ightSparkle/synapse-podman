@@ -54,6 +54,7 @@ EOT
 # Set any defaults not specified in the config file
 [[ ! "$synapseImage" ]]             && synapseImage="ghcr.io/element-hq/synapse:latest"
 [[ ! "$synapsePort" ]]              && synapsePort=8448
+[[ ! "$synapseEnablePresence" ]]    && synapseEnablePresence=true
 [[ ! "$synapseAdditionalVolumes" ]] && synapseAdditionalVolumes=()
 [[ ! "$postgresImage" ]]            && postgresImage="docker.io/postgres:latest"
 [[ ! "$portgresPort" ]]             && portgresPort=5432
@@ -69,8 +70,9 @@ EOT
 [[ ! "$hookshotWebhooksPort" ]]     && hookshotWebhooksPort=9100
 [[ ! "$hookshotWidgetsPort" ]]      && hookshotWidgetsPort=9102
 
-# This variable needs to be exported so it can be used with yq
+# These variables needs to be exported so it can be used with yq
 export synapsePortEnv="$synapsePort"
+export synapseEnablePresenceEnv="$synapseEnablePresence"
 
 # Vars
 synapseData="$workDirFullPath/synapse"
@@ -301,6 +303,9 @@ function generateElementConfig {
     "element_call": {
         "brand": "Element Call",
         "url": "https://call.element.io"
+    },
+    "enable_presence_by_hs_url": {
+        "http://$serverName": $synapseEnablePresence
     },
     "features": {
         "feature_jump_to_date": true,
@@ -545,7 +550,7 @@ function generateSynapseConfig {
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
             .listeners[0].port = env(synapsePortEnv) |
             .log_config = "/data/log.config.yaml" |
-            .presence.enabled = false |
+            .presence.enabled = env(synapseEnablePresenceEnv) |
             .suppress_key_server_warning = true |
             .suppress_key_server_warning = true |
             .trusted_key_servers[0].accept_keys_insecurely = true |
