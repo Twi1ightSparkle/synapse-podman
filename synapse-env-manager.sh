@@ -40,6 +40,7 @@ Options:
     rse:        Restart the Element Web container.
     rsh:        Restart the Hookshot container.
     rss:        Restart the Synapse container.
+    rssa:       Restart the Synapse Admin container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
 
@@ -69,6 +70,9 @@ EOT
 [[ ! "$redisImage" ]]               && redisImage="docker.io/redis:latest"
 [[ ! "$hookshotWebhooksPort" ]]     && hookshotWebhooksPort=9100
 [[ ! "$hookshotWidgetsPort" ]]      && hookshotWidgetsPort=9102
+[[ ! "$enableSynapseAdmin" ]]       && enableSynapseAdmin=true
+[[ ! "$synapseAdminImage" ]]        && synapseAdminImage="ghcr.io/etkecc/synapse-admin:latest"
+[[ ! "$synapseAdminPort" ]]         && synapseAdminPort=10002
 
 # These variables needs to be exported so it can be used with yq
 export synapsePortEnv="$synapsePort"
@@ -246,6 +250,19 @@ EOT
       - 127.0.0.1:$elementPort:8080/tcp
     volumes:
         - $elementConfigFile:/app/config.json:Z
+EOT
+
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableSynapseAdmin" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
+
+  synapseadmin:
+    container_name: $workDirBaseName-synapseadmin
+    image: $synapseAdminImage
+    restart: unless-stopped
+    environment:
+      - SERVER_PORT=8080
+    ports:
+      - 127.0.0.1:$synapseAdminPort:8080/tcp
 EOT
 
     # If user agreed to overwrite AND the target file to overwrite exists
@@ -573,8 +590,9 @@ function generateSynapseConfig {
 # Print links
 function printLinks {
     links="Links:\n\n- Synapse: http://localhost:$synapsePort/_matrix/static"
-    [[ "$enableElementWeb" == true ]] && links+="\n- Element Web: http://localhost:$elementPort"
     [[ "$enableAdminer" == true ]] && links+="\n- Adminer: http://localhost:$portgresPort"
+    [[ "$enableElementWeb" == true ]] && links+="\n- Element Web: http://localhost:$elementPort"
+    [[ "$enableSynapseAdmin" == true ]] && links+="\n- Synapse Admin: http://localhost:$synapseAdminPort"
 
     echo -e "$links"                
 }
@@ -612,6 +630,11 @@ function restartSynapse {
     podman restart "$workDirBaseName-synapse"
 }
 
+# Restart the Synapse Admin container
+function restartSynapseAdmin {
+    podman restart "$workDirBaseName-synapseadmin"
+}
+
 # Stop the environment
 function stopEnvironment {
     if [[ "$composeDash" == "true" ]]; then
@@ -625,18 +648,19 @@ checkRequiredPrograms
 checkRequiredDirectories
 
 case $1 in
-    admin)      createAdminAccount      ;;
-    delete)     deleteEnvironment       ;;
-    gencom)     generatePodmanCompose   ;;
-    genele)     generateElementConfig   ;;
-    genhook)    generateHookshotConfig  ;;
-    gensyn)     generateSynapseConfig   ;;
-    links)      printLinks              ;;
-    pull)       pullImages              ;;
-    rsa)        restartAll              ;;
-    rse)        restartElement          ;;
-    rsh)        restartHookshot         ;;
-    rss)        restartSynapse          ;;
+    admin)      createAdminAccount          ;;
+    delete)     deleteEnvironment           ;;
+    gencom)     generatePodmanCompose       ;;
+    genele)     generateElementConfig       ;;
+    genhook)    generateHookshotConfig      ;;
+    gensyn)     generateSynapseConfig       ;;
+    links)      printLinks                  ;;
+    pull)       pullImages                  ;;
+    rsa)        restartAll                  ;;
+    rse)        restartElement              ;;
+    rsh)        restartHookshot             ;;
+    rss)        restartSynapse              ;;
+    rssa)       restartSynapseAdmin         ;;
     setup)
         generatePodmanCompose
         generateElementConfig
@@ -645,6 +669,6 @@ case $1 in
         pullImages
         restartAll
         ;;
-    stop)       stopEnvironment         ;;
-    *)          help                    ;;
+    stop)       stopEnvironment             ;;
+    *)          help                        ;;
 esac
