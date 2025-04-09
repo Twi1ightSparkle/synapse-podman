@@ -63,10 +63,10 @@ EOT
 [[ ! "$adminerImage" ]]             && adminerImage="docker.io/adminer:latest"
 [[ ! "$adminerPort" ]]              && adminerPort=10001
 [[ ! "$enableElementWeb" ]]         && enableElementWeb=true
-[[ ! "$elementImage" ]]             && elementImage="docker.io/vectorim/element-web:latest"
+[[ ! "$elementImage" ]]             && elementImage="ghcr.io/element-hq/element-web:latest"
 [[ ! "$elementPort" ]]              && elementPort=10000
 [[ ! "$enableHookshot" ]]           && enableHookshot=false
-[[ ! "$hookshotImage" ]]            && hookshotImage="docker.io/halfshot/matrix-hookshot:latest"
+[[ ! "$hookshotImage" ]]            && hookshotImage="ghcr.io/matrix-org/matrix-hookshot:latest"
 [[ ! "$redisImage" ]]               && redisImage="docker.io/redis:latest"
 [[ ! "$hookshotWebhooksPort" ]]     && hookshotWebhooksPort=9100
 [[ ! "$hookshotWidgetsPort" ]]      && hookshotWidgetsPort=9102
