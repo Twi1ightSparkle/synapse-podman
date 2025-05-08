@@ -2,4 +2,6 @@ compose.yml
 config.env
 elementConfig.json
 hookshot
+masConfig.yaml
+nginx.conf
 synapse
