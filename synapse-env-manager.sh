@@ -733,7 +733,7 @@ EOT
 server {
     listen       80;
     server_name  $synapseHost;
-    location ~ ^(/_matrix|/_synapse/client) {
+    location ~ ^(/_matrix|/_synapse/client|/_synapse/admin) {
         proxy_pass http://synapse:8448;
         client_max_body_size 50M;
         proxy_http_version 1.1;
