@@ -92,6 +92,10 @@ MAS is enabled by default. Disable it with `enableMas=false`. You must delete
 the environment after changing enabling or disabling MAS. Or migrate manually
 after changing. This script do not have support for automated migration.
 
+To authenticate with the MAS Admin API, use client ID
+`0000000000000000000SYNAPSE` and client secret `secret`. For the Swagger UI, use
+client ID `01JTTHHQBMKE8W3VCXRVFVW04P` and secret `secret`.
+
 ## Host names
 
 Must be used on Mac since only 127.0.0.1 resolves to loopback, not the rest of

@@ -657,11 +657,17 @@ function generateMasConfig {
         yq --inplace 'del(.http.listeners[0].binds[0])' "$masConfigFile"
         yq --inplace 'del(.database)' "$masConfigFile"
         export masManagement="http://$masHost:$listenPort"
+        export swaggerCallback="http://$masHost:$listenPort/api/doc/oauth2-callback"
         yq --inplace '
             .accountpassword_registration_enabled = true |
             .clients[0].client_auth_method = "client_secret_basic" |
             .clients[0].client_id = "0000000000000000000SYNAPSE" |
             .clients[0].client_secret = "secret" |
+            .clients[1].client_auth_method = "client_secret_post" |
+            .clients[1].client_id = "01JTTHHQBMKE8W3VCXRVFVW04P" |
+            .clients[1].client_secret = "secret" |
+            .clients[1].redirect_uris[0] = "https://element-hq.github.io/matrix-authentication-service/api/oauth2-redirect.html" |
+            .clients[1].redirect_uris[0] = env(swaggerCallback) |
             .database.database = "mas" |
             .database.host = "mas-postgres" |
             .database.password = "password" |
@@ -681,6 +687,7 @@ function generateMasConfig {
             .policy.client_registration.allow_insecure_uris = true |
             .policy.client_registration.allow_missing_client_uri = true |
             .policy.data.admin_clients[0] = "0000000000000000000SYNAPSE" |
+            .policy.data.admin_clients[1] = "01JTTHHQBMKE8W3VCXRVFVW04P" |
             .policy.data.admin_users[0] = "admin"
         ' "$masConfigFile"
         export masManagement="http://$masHost:$listenPort/"
@@ -923,6 +930,8 @@ function printLinks {
         links+="\n- Element Web:         http://$elementHost:$listenPort"
     [[ "$enableMas" == true ]] && \
         links+="\n- MAS:                 http://$masHost:$listenPort"
+    [[ "$enableMas" == true ]] && \
+        links+="\n- MAS Swagger UI:      http://$masHost:$listenPort/api/doc/"
     [[ "$enableSynapseAdmin" == true ]] && \
         links+="\n- Synapse Admin:       http://$synapseAdminHost:$listenPort?\
 username=admin&password=admin&server=http://$synapseHost:$listenPort"
