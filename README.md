@@ -94,7 +94,7 @@ after changing. This script do not have support for automated migration.
 
 ## Host names
 
-Must be used on Mac since only 127.0.0.1 resolves to loopback, not the test of
+Must be used on Mac since only 127.0.0.1 resolves to loopback, not the rest of
 the 127.0.0.0/8 net...
 
 `/etc/hosts`
