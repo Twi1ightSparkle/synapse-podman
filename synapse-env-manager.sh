@@ -673,6 +673,10 @@ function generateMasConfig {
             .database.password = "password" |
             .database.port = 5432 |
             .database.username = "mas" |
+            .experimental.access_token_ttl = 86400 |
+            .experimental.compat_token_ttl = 86400 |
+            .experimental.inactive_session_expiration.expire_compat_sessions = false |
+            .experimental.inactive_session_expiration.ttl = 86400 |
             .http.issuer = env(masManagement) |
             .http.listeners[0].binds[0].host = "0.0.0.0" |
             .http.listeners[0].binds[0].port = 8080 |
