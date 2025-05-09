@@ -62,6 +62,14 @@ EOT
 [[ ! "$ingressPort" ]] && ingressPort=8080
 [[ ! "$listenPort" ]] && listenPort="$ingressPort"
 
+[[ ! "$serverName" ]] && serverName="127.0.0.1"
+[[ ! "$synapseHost" ]] && synapseHost="127.0.0.10"
+[[ ! "$masHost" ]] && masHost="127.0.0.15"
+[[ ! "$elementHost" ]] && elementHost="127.0.0.20"
+[[ ! "$hookshotHost" ]] && hookshotHost="127.0.0.25"
+[[ ! "$synapseAdminHost" ]] && synapseAdminHost="127.0.0.30"
+[[ ! "$adminerHost" ]] && adminerHost="127.0.0.35"
+
 [[ ! "$synapseImage" ]] && synapseImage="ghcr.io/element-hq/synapse:latest"
 [[ ! "$synapseEnablePresence" ]] && synapseEnablePresence=true
 [[ ! "$synapseAdditionalVolumes" ]] && synapseAdditionalVolumes=()
@@ -98,27 +106,20 @@ fi
 nginxConfigFile="$workDirFullPath/nginx.conf"
 composeFile="$workDirFullPath/compose.yml"
 
-serverName="127.0.0.1"
-synapseIp="127.0.0.10"
 synapseData="$workDirFullPath/synapse"
 synapseConfigFile="$synapseData/homeserver.yaml"
 synapseGeneratedLogConfigFile="$synapseData/$serverName.log.config"
 synapseLogConfigFile="$synapseData/log.config.yaml"
 
 masConfigFile="$workDirFullPath/masConfig.yaml"
-masIp="127.0.0.15"
 
 elementConfigFile="$workDirFullPath/elementConfig.json"
-elementIp="127.0.0.20"
 
 hookshotData="$workDirFullPath/hookshot"
 hookshotConfigFile="$hookshotData/config.yml"
 hookshotPasskeyFile="$hookshotData/passkey.pem"
 hookshotRegistrationFile="$hookshotData/registration.yml"
-hookshotIp="127.0.0.25"
 
-synapseAdminIp="127.0.0.30"
-adminerIp="127.0.0.35"
 
 composeDash="false"
 
@@ -416,7 +417,7 @@ function generateElementConfig {
     "default_federate": true,
     "default_server_config": {
         "m.homeserver": {
-            "base_url": "http://$synapseIp:$listenPort",
+            "base_url": "http://$synapseHost:$listenPort",
             "server_name": "$serverName"
         },
         "m.identity_server": {
@@ -433,7 +434,7 @@ function generateElementConfig {
         "url": "https://call.element.io"
     },
     "enable_presence_by_hs_url": {
-        "http://$synapseIp:$listenPort": $synapseEnablePresence,
+        "http://$synapseHost:$listenPort": $synapseEnablePresence,
         "http://$serverName": $synapseEnablePresence
     },
     "features": {
@@ -496,7 +497,7 @@ bot:
 bridge:
   bindAddress: 0.0.0.0
   domain: $serverName
-  mediaUrl: http://$synapseIp:$listenPort
+  mediaUrl: http://$synapseHost:$listenPort
   port: 9993
   url: http://synapse:8448
 cache:
@@ -510,7 +511,7 @@ generic:
   enableHttpGet: false
   enabled: true
   outbound: true
-  urlPrefix: http://$hookshotIp:$listenPort/webhook/
+  urlPrefix: http://$hookshotHost:$listenPort/webhook/
   userIdPrefix: _webhooks_
   waitForComplete: false
 listeners:
@@ -544,7 +545,7 @@ widgets:
   disallowedIpRanges: []
   openIdOverrides:
     $serverName: http://synapse:8448
-  publicUrl: http://$hookshotIp:$listenPort/widgetapi/v1/static/
+  publicUrl: http://$hookshotHost:$listenPort/widgetapi/v1/static/
   roomSetupWidget:
     addOnInvite: false
 EOT
@@ -655,7 +656,7 @@ function generateMasConfig {
         yq --inplace 'del(.http.trusted_proxies)' "$masConfigFile"
         yq --inplace 'del(.http.listeners[0].binds[0])' "$masConfigFile"
         yq --inplace 'del(.database)' "$masConfigFile"
-        export masManagement="http://$masIp:$listenPort"
+        export masManagement="http://$masHost:$listenPort"
         yq --inplace '
             .accountpassword_registration_enabled = true |
             .clients[0].client_auth_method = "client_secret_basic" |
@@ -682,7 +683,7 @@ function generateMasConfig {
             .policy.data.admin_clients[0] = "0000000000000000000SYNAPSE" |
             .policy.data.admin_users[0] = "admin"
         ' "$masConfigFile"
-        export masManagement="http://$masIp:$listenPort/"
+        export masManagement="http://$masHost:$listenPort/"
         yq --inplace '
           .enable_registration = false |
           .experimental_features.msc3861.account_management_url = env(masManagement) |
@@ -703,27 +704,44 @@ function generateNginxConfig {
         read -rp "Overwrite $nginxConfigFile? [y/N]: " verification
     
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ ! -f "$nginxConfigFile" ]] || [[ "$verification" == "y" ]] && \
+    if [[ ! -f "$nginxConfigFile" ]] || [[ "$verification" == "y" ]]; then
         cat <<EOT > "$nginxConfigFile"
 # Well-known
 server {
     listen       80;
     server_name  $serverName;
     location /.well-known/matrix/client {
-        return 200 '{"m.homeserver":{"base_url":"http://$synapseIp:$listenPort"}}';
+        return 200 '{"m.homeserver":{"base_url":"http://$synapseHost:$listenPort"}}';
         add_header Content-Type application/json;
         add_header 'Access-Control-Allow-Origin' '*';
     }
     location /.well-known/matrix/server {
-        return 200 '{"m.server": "$synapseIp:$listenPort"}';
+        return 200 '{"m.server": "$synapseHost:$listenPort"}';
         add_header Content-Type application/json;
     }
 }
-
+EOT
+        [[ "$enableMas" == false ]] && cat <<EOT >> "$nginxConfigFile"
 # Synapse
 server {
     listen       80;
-    server_name  $synapseIp;
+    server_name  $synapseHost;
+    location ~ ^(/_matrix|/_synapse/client) {
+        proxy_pass http://synapse:8448;
+        client_max_body_size 50M;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host:\$server_port;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOT
+
+        [[ "$enableMas" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Synapse
+server {
+    listen       80;
+    server_name  $synapseHost;
     location ~ ^/_matrix/client/(.*)/(login|logout|refresh) {
         proxy_pass http://mas:8080;
         proxy_http_version 1.1;
@@ -738,11 +756,10 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
-
 # MAS
 server {
     listen       80;
-    server_name  $masIp;
+    server_name  $masHost;
     location / {
         proxy_pass http://mas:8080;
         add_header Content-Security-Policy "frame-ancestors 'self'";
@@ -753,11 +770,13 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
+EOT
 
+        [[ "$enableElementWeb" == true ]] && cat <<EOT >> "$nginxConfigFile"
 # Element Web
 server {
     listen       80;
-    server_name  $elementIp;
+    server_name  $elementHost;
     location / {
         proxy_pass http://elementweb:8080;
         add_header Content-Security-Policy "frame-ancestors 'self'";
@@ -768,11 +787,13 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
+EOT
 
+        [[ "$enableHookshot" == true ]] && cat <<EOT >> "$nginxConfigFile"
 # Hookshot
 server {
     listen       80;
-    server_name  $elementIp;
+    server_name  $elementHost;
     location / {
         proxy_pass http://hookshot:9993;
         add_header Content-Security-Policy "frame-ancestors 'self'";
@@ -783,11 +804,13 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
+EOT
 
+        [[ "$enableSynapseAdmin" == true ]] && cat <<EOT >> "$nginxConfigFile"
 # Synapse Admin
 server {
     listen       80;
-    server_name  $synapseAdminIp;
+    server_name  $synapseAdminHost;
     location / {
         proxy_pass http://synapseadmin:8080;
         add_header Content-Security-Policy "frame-ancestors 'self'";
@@ -798,11 +821,13 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
+EOT
 
+        [[ "$enableAdminer" == true ]] && cat <<EOT >> "$nginxConfigFile"
 # Adminer
 server {
     listen       80;
-    server_name  $adminerIp;
+    server_name  $adminerHost;
     location / {
         proxy_pass http://adminer:8080;
         add_header Content-Security-Policy "frame-ancestors 'self'";
@@ -814,6 +839,7 @@ server {
     }
 }
 EOT
+    fi
 }
 
 # Generate Synapse config if not present or ask to overwrite
@@ -890,16 +916,16 @@ $synapseLogConfigFile? [y/N]: " verification
 # Print links
 function printLinks {
     links="Links:\n\n- Synapse server name: $serverName"
-    links+="\n- Synapse endpoint:    http://$synapseIp:$listenPort"
+    links+="\n- Synapse endpoint:    http://$synapseHost:$listenPort"
     [[ "$enableAdminer" == true ]] && \
-        links+="\n- Adminer:             http://$adminerIp:$listenPort"
+        links+="\n- Adminer:             http://$adminerHost:$listenPort"
     [[ "$enableElementWeb" == true ]] && \
-        links+="\n- Element Web:         http://$elementIp:$listenPort"
+        links+="\n- Element Web:         http://$elementHost:$listenPort"
     [[ "$enableMas" == true ]] && \
-        links+="\n- MAS:                 http://$masIp:$listenPort"
+        links+="\n- MAS:                 http://$masHost:$listenPort"
     [[ "$enableSynapseAdmin" == true ]] && \
-        links+="\n- Synapse Admin:       http://$synapseAdminIp:$listenPort?\
-username=admin&password=admin&server=http://$synapseIp:$listenPort"
+        links+="\n- Synapse Admin:       http://$synapseAdminHost:$listenPort?\
+username=admin&password=admin&server=http://$synapseHost:$listenPort"
 
     echo -e "$links"                
 }

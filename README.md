@@ -91,3 +91,32 @@ listenPort=80
 MAS is enabled by default. Disable it with `enableMas=false`. You must delete
 the environment after changing enabling or disabling MAS. Or migrate manually
 after changing. This script do not have support for automated migration.
+
+## Host names
+
+Must be used on Mac since only 127.0.0.1 resolves to loopback, not the test of
+the 127.0.0.0/8 net...
+
+`/etc/hosts`
+
+```plaintext
+127.0.0.1 matrix.local
+127.0.0.1 synapse.matrix.local
+127.0.0.1 mas.matrix.local
+127.0.0.1 element.matrix.local
+127.0.0.1 hookshot.matrix.local
+127.0.0.1 admin.matrix.local
+127.0.0.1 adminer.matrix.local
+```
+
+`config.env`
+
+```plaintext
+serverName="matrix.local"
+synapseHost="synapse.matrix.local"
+masHost="mas.matrix.local"
+elementHost="element.matrix.local"
+hookshotHost="hookshot.matrix.local"
+synapseAdminHost="admin.matrix.local"
+adminerHost="adminer.matrix.local"
+```
