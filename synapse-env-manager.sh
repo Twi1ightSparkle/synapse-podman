@@ -905,6 +905,7 @@ $synapseLogConfigFile? [y/N]: " verification
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
             .listeners[0].port = 8448 |
             .log_config = "/data/log.config.yaml" |
+            .password_config.pepper = "s3cr3tP3pp3r" |
             .presence.enabled = env(synapseEnablePresenceEnv) |
             .suppress_key_server_warning = true |
             .suppress_key_server_warning = true |
