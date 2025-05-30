@@ -484,7 +484,8 @@ function generateHookshotConfig {
     msg="Overwrite $hookshotConfigFile and $hookshotRegistrationFile? [y/N]: "
     [[ -f "$hookshotConfigFile" ]] && read -rp "$msg" verification
 
-    if [[ ! -f "$hookshotConfigFile" ]] || [[ "$verification" == "y" ]]; then
+    if [[ "$enableHookshot" == true && (! -f "$hookshotConfigFile" || "$verification" == "y") ]]
+    then
         ## Cleanup everything and recreate directories
         [[ -d "$hookshotData" ]] && rm -rf "$hookshotData"
         mkdir -p "$hookshotData"
@@ -640,7 +641,9 @@ function generateMasConfig {
         read -rp "Overwrite $masConfigFile? [y/N]: " verification
     
     # If user agreed to overwrite AND the target file to overwrite exists
-    if [[ ! -f "$masConfigFile" ]] || [[ "$verification" == "y" ]]; then
+    # AND MAS is enabled
+    if [[ "$enableMas" == true && (! -f "$masConfigFile" || "$verification" == "y") ]]
+    then
         # Delete the files so MAS can re-generate them
         [[ -f "$masConfigFile" ]] && rm "$masConfigFile"
 
