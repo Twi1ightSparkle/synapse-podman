@@ -69,6 +69,7 @@ EOT
 [[ ! "$hookshotHost" ]] && hookshotHost="127.0.0.25"
 [[ ! "$synapseAdminHost" ]] && synapseAdminHost="127.0.0.30"
 [[ ! "$adminerHost" ]] && adminerHost="127.0.0.35"
+[[ ! "$mailhogHost" ]] && mailhogHost="127.0.0.40"
 
 [[ ! "$synapseImage" ]] && synapseImage="ghcr.io/element-hq/synapse:latest"
 [[ ! "$synapseEnablePresence" ]] && synapseEnablePresence=true
@@ -77,6 +78,9 @@ EOT
 [[ ! "$enableMas" ]] && enableMas=true
 [[ ! "$masImage" ]] && \
     masImage="ghcr.io/element-hq/matrix-authentication-service:latest"
+
+[[ ! "$enableMailhog" ]] && enableMailhog="$enableMas"
+[[ ! "$mailhogImage" ]] && mailhogImage="docker.io/mailhog/mailhog:latest"
 
 [[ ! "$postgresImage" ]] && postgresImage="docker.io/postgres:latest"
 
@@ -358,6 +362,18 @@ EOT
       - 127.0.0.1:47609:5432/tcp
     volumes:
       - masPostgresData:/var/lib/postgresql/data
+EOT
+
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableMailhog" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
+
+  mailhog:
+    container_name: $workDirBaseName-mailhog
+    image: $mailhogImage
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:47612:8025
 EOT
 
     # If user agreed to overwrite AND the target file to overwrite exists
@@ -709,6 +725,18 @@ function generateMasConfig {
           .experimental_features.msc3861.introspection_endpoint = "http://mas:8080/oauth2/introspect" |
           .experimental_features.msc3861.issuer = "http://mas:8080/"
         ' "$synapseConfigFile"
+
+        if [[ "$enableMailhog" == true ]]; then
+            export masEmailFrom="mas@$serverName"
+            yq --inplace '
+                .email.from = env(masEmailFrom) |
+                .email.hostname = "mailhog" |
+                .email.mode = "plain" |
+                .email.port = 1025 |
+                .email.reply_to = env(masEmailFrom) |
+                .email.transport = "smtp"
+            ' "$masConfigFile"
+        fi
     fi
 }
 
@@ -776,6 +804,23 @@ server {
     server_name  $masHost;
     location / {
         proxy_pass http://mas:8080;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+
+        [[ "$enableMailhog" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Mailhog
+server {
+    listen       80;
+    server_name  $mailhogHost;
+    location / {
+        proxy_pass http://mailhog:8025;
         add_header Content-Security-Policy "frame-ancestors 'self'";
         add_header X-Content-Type-Options nosniff;
         add_header X-Frame-Options SAMEORIGIN;
@@ -940,6 +985,8 @@ function printLinks {
         links+="\n- MAS:                 http://$masHost:$listenPort"
     [[ "$enableMas" == true ]] && \
         links+="\n- MAS Swagger UI:      http://$masHost:$listenPort/api/doc/"
+    [[ "$enableMailhog" == true ]] && \
+        links+="\n- Mailhog:             http://$mailhogHost:$listenPort"
     [[ "$enableSynapseAdmin" == true ]] && \
         links+="\n- Synapse Admin:       http://$synapseAdminHost:$listenPort?\
 username=admin&password=admin&server=http://$synapseHost:$listenPort"

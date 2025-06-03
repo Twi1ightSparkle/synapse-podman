@@ -8,6 +8,7 @@ Currently supported services:
     database
 -   [Matrix Authentication Service](https://element-hq.github.io/matrix-authentication-service/)
     with Postgres database
+-   [Mailhog](https://github.com/mailhog/MailHog)
 -   [Element Web](https://web-docs.element.dev/)
 -   [Hookshot](https://matrix-org.github.io/matrix-hookshot/latest/index.html)
 -   [Adminer](https://www.adminer.org/en/)
@@ -96,6 +97,10 @@ To authenticate with the MAS Admin API, use client ID
 `0000000000000000000SYNAPSE` and client secret `secret`. For the Swagger UI, use
 client ID `01JTTHHQBMKE8W3VCXRVFVW04P` and secret `secret`.
 
+As MAS requires email verification for user registration, a Mailhog instance is
+setup by default when MAS is enabled. Use any email address during registration
+and open the Mailhog link to get the email.
+
 ## Host names
 
 Must be used on Mac since only 127.0.0.1 resolves to loopback, not the rest of
@@ -107,6 +112,7 @@ the 127.0.0.0/8 net...
 127.0.0.1 matrix.local
 127.0.0.1 synapse.matrix.local
 127.0.0.1 mas.matrix.local
+127.0.0.1 mailhog.matrix.local
 127.0.0.1 element.matrix.local
 127.0.0.1 hookshot.matrix.local
 127.0.0.1 admin.matrix.local
@@ -119,6 +125,7 @@ the 127.0.0.0/8 net...
 serverName="matrix.local"
 synapseHost="synapse.matrix.local"
 masHost="mas.matrix.local"
+mailhogHost="mailhog.matrix.local"
 elementHost="element.matrix.local"
 hookshotHost="hookshot.matrix.local"
 synapseAdminHost="admin.matrix.local"
