@@ -662,7 +662,7 @@ function generateMasConfig {
         export masManagement="http://$masHost:$listenPort"
         export swaggerCallback="http://$masHost:$listenPort/api/doc/oauth2-callback"
         yq --inplace '
-            .accountpassword_registration_enabled = true |
+            .account.password_registration_enabled = true |
             .clients[0].client_auth_method = "client_secret_basic" |
             .clients[0].client_id = "0000000000000000000SYNAPSE" |
             .clients[0].client_secret = "secret" |
