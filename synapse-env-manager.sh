@@ -789,7 +789,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
-    location ~ ^(/_matrix|/_synapse/client) {
+    location ~ ^(/_matrix|/_synapse/client|/_synapse/admin) {
         proxy_pass http://synapse:8448;
         client_max_body_size 50M;
         proxy_http_version 1.1;
@@ -1091,3 +1091,5 @@ case $1 in
     stop)       stopEnvironment             ;;
     *)          help                        ;;
 esac
+
+
