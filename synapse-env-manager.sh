@@ -1,8 +1,8 @@
 #!/bin/bash
 # shellcheck source=/dev/null
 
-# Quickly spin up a Synapse + Postgres in Podman for testing.
-# Copyright (C) 2024  Twilight Sparkle
+# Quickly spin up a Synapse and friends in Podman for testing.
+# Copyright (C) 2025  Twilight Sparkle
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -28,10 +28,13 @@ Usage: $scriptPath <option>
 
 Options:
     admin:      Create Synapse admin account (username: admin. password: admin).
+    comp:       Create MAS compatibility admin token for user admin.
     delete:     Delete the environment, Synapse/Postgres data, and config files.
     gencom:     Regenerate the Podman Compose file.
     genele:     Regenerate the Element Web config file.
     genhook:    Regenerate the Hookshot config file.
+    genmas:     Regenerate the Matrix-Authentication-Service config file.
+    genng:      Regenerate the Nginx config file.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
     links:      Print links.
@@ -39,6 +42,8 @@ Options:
     rsa:        Restart all containers.
     rse:        Restart the Element Web container.
     rsh:        Restart the Hookshot container.
+    rsm:        Restart the Matrix-Authentication-Service container.
+    rsn:        Restart the Nginx container.
     rss:        Restart the Synapse container.
     rssa:       Restart the Synapse Admin container.
     setup:      Create, edit, (re)start the environment.
@@ -53,45 +58,78 @@ EOT
 [[ -f "$configFile" ]] && source "$configFile"
 
 # Set any defaults not specified in the config file
-[[ ! "$synapseImage" ]]             && synapseImage="ghcr.io/element-hq/synapse:latest"
-[[ ! "$synapsePort" ]]              && synapsePort=8448
-[[ ! "$synapseEnablePresence" ]]    && synapseEnablePresence=true
-[[ ! "$synapseAdditionalVolumes" ]] && synapseAdditionalVolumes=()
-[[ ! "$postgresImage" ]]            && postgresImage="docker.io/postgres:latest"
-[[ ! "$portgresPort" ]]             && portgresPort=5432
-[[ ! "$enableAdminer" ]]            && enableAdminer=false
-[[ ! "$adminerImage" ]]             && adminerImage="docker.io/adminer:latest"
-[[ ! "$adminerPort" ]]              && adminerPort=10001
-[[ ! "$enableElementWeb" ]]         && enableElementWeb=true
-[[ ! "$elementImage" ]]             && elementImage="ghcr.io/element-hq/element-web:latest"
-[[ ! "$elementPort" ]]              && elementPort=10000
-[[ ! "$enableHookshot" ]]           && enableHookshot=false
-[[ ! "$hookshotImage" ]]            && hookshotImage="ghcr.io/matrix-org/matrix-hookshot:latest"
-[[ ! "$redisImage" ]]               && redisImage="docker.io/redis:latest"
-[[ ! "$hookshotWebhooksPort" ]]     && hookshotWebhooksPort=9100
-[[ ! "$hookshotWidgetsPort" ]]      && hookshotWidgetsPort=9102
-[[ ! "$enableSynapseAdmin" ]]       && enableSynapseAdmin=true
-[[ ! "$synapseAdminImage" ]]        && synapseAdminImage="ghcr.io/etkecc/synapse-admin:latest"
-[[ ! "$synapseAdminPort" ]]         && synapseAdminPort=10002
+[[ ! "$nginxImage" ]] && nginxImage="docker.io/nginx:latest"
+[[ ! "$ingressPort" ]] && ingressPort=8080
+[[ ! "$listenPort" ]] && listenPort="$ingressPort"
 
-# These variables needs to be exported so it can be used with yq
-export synapsePortEnv="$synapsePort"
-export synapseEnablePresenceEnv="$synapseEnablePresence"
+[[ ! "$serverName" ]] && serverName="127.0.0.1"
+[[ ! "$synapseHost" ]] && synapseHost="127.0.0.10"
+[[ ! "$masHost" ]] && masHost="127.0.0.15"
+[[ ! "$elementHost" ]] && elementHost="127.0.0.20"
+[[ ! "$hookshotHost" ]] && hookshotHost="127.0.0.25"
+[[ ! "$synapseAdminHost" ]] && synapseAdminHost="127.0.0.30"
+[[ ! "$adminerHost" ]] && adminerHost="127.0.0.35"
+[[ ! "$mailhogHost" ]] && mailhogHost="127.0.0.40"
+
+[[ ! "$synapseImage" ]] && synapseImage="ghcr.io/element-hq/synapse:latest"
+[[ ! "$synapseEnablePresence" ]] && synapseEnablePresence=true
+[[ ! "$synapseAdditionalVolumes" ]] && synapseAdditionalVolumes=()
+
+[[ ! "$enableMas" ]] && enableMas=true
+[[ ! "$masImage" ]] && \
+    masImage="ghcr.io/element-hq/matrix-authentication-service:latest"
+
+[[ ! "$enableMailhog" ]] && enableMailhog="$enableMas"
+[[ ! "$mailhogImage" ]] && mailhogImage="docker.io/mailhog/mailhog:latest"
+
+[[ ! "$postgresImage" ]] && postgresImage="docker.io/postgres:latest"
+
+[[ ! "$enableAdminer" ]] && enableAdminer=false
+[[ ! "$adminerImage" ]] && adminerImage="docker.io/adminer:latest"
+
+[[ ! "$enableElementWeb" ]] && enableElementWeb=true
+[[ ! "$elementImage" ]] && elementImage="ghcr.io/element-hq/element-web:latest"
+
+[[ ! "$enableHookshot" ]] && enableHookshot=false
+[[ ! "$hookshotEncryption" ]] && hookshotEncryption=false
+[[ ! "$hookshotImage" ]] && \
+    hookshotImage="ghcr.io/matrix-org/matrix-hookshot:latest"
+[[ ! "$redisImage" ]] && redisImage="docker.io/redis:latest"
+
+[[ ! "$enableSynapseAdmin" ]] && enableSynapseAdmin=true
+[[ ! "$synapseAdminImage" ]] && \
+    synapseAdminImage="ghcr.io/etkecc/synapse-admin:latest"
+
+if [[ "$enableMas" == true ]] && [[ "$enableHookshot" == true ]]; then
+    echo "Hookshot encryption is not compatible with MAS. \
+https://github.com/matrix-org/matrix-hookshot/issues/980"
+    exit 1
+fi
 
 # Vars
-synapseData="$workDirFullPath/synapse"
+nginxConfigFile="$workDirFullPath/nginx.conf"
 composeFile="$workDirFullPath/compose.yml"
-elementConfigFile="$workDirFullPath/elementConfig.json"
-serverName="localhost:$synapsePort"
+
+synapseData="$workDirFullPath/synapse"
 synapseConfigFile="$synapseData/homeserver.yaml"
-synapseGeneratedLogConfigFile="$synapseData/localhost:$synapsePort.log.config"
+synapseGeneratedLogConfigFile="$synapseData/$serverName.log.config"
 synapseLogConfigFile="$synapseData/log.config.yaml"
+
+masConfigFile="$workDirFullPath/masConfig.yaml"
+
+elementConfigFile="$workDirFullPath/elementConfig.json"
+
 hookshotData="$workDirFullPath/hookshot"
 hookshotConfigFile="$hookshotData/config.yml"
 hookshotPasskeyFile="$hookshotData/passkey.pem"
 hookshotRegistrationFile="$hookshotData/registration.yml"
 
+
 composeDash="false"
+
+# These variables needs to be exported so it can be used with yq
+export serverNameEnv="$serverName"
+export synapseEnablePresenceEnv="$synapseEnablePresence"
 
 # Check that required programs are installed on the system
 function checkRequiredPrograms {
@@ -103,7 +141,8 @@ function checkRequiredPrograms {
         fi
     done
     if [[ -n "$missing" ]]; then
-        echo -e "Required programs are missing on this system. Please install:$missing"
+        echo -e "Required programs are missing on this system. \
+Please install:$missing"
         exit 1
     fi
 
@@ -134,21 +173,46 @@ function checkRequiredDirectories {
 
 # Create Synapse admin account
 function createAdminAccount {
-    podman exec \
-        "$workDirBaseName-synapse" \
-        /bin/bash \
-        -c "register_new_matrix_user \
-            --admin \
-            --config /data/homeserver.yaml \
-            --password admin \
-            --user admin"
+    if [[ "$enableMas" == true ]]; then
+        podman exec \
+            "$workDirBaseName-mas" \
+            mas-cli manage register-user \
+                --admin \
+                --email admin@example.com \
+                --ignore-password-complexity \
+                --password admin \
+                --yes \
+                admin
+    else
+        podman exec \
+            "$workDirBaseName-synapse" \
+            /bin/bash \
+            -c "register_new_matrix_user \
+                --admin \
+                --config /data/homeserver.yaml \
+                --password admin \
+                --user admin"
+    fi
+    exit 0
+}
+
+# Create MAS compatibility token
+function createCompatibilityToken {
+    if [[ "$enableMas" == true ]]; then
+        podman exec \
+            "$workDirBaseName-mas" \
+            mas-cli manage issue-compatibility-token \
+                --yes-i-want-to-grant-synapse-admin-privileges \
+                admin
+    fi
     exit 0
 }
 
 # Delete the environment
 function deleteEnvironment {
-    msg="Enter YES to confirm deleting the environment, Postgres volume, and the directories/files hookshot/, "
-    msg+="synapse/, compose.yml, and elementConfig.json: "
+    msg="Enter YES to confirm deleting the environment, Postgres volume, and \
+the directories/files hookshot/, synapse/, compose.yml, masConfig.yaml, \
+nginx.conf, and elementConfig.json: "
     read -rp "$msg" verification
     [[ "$verification" != "YES" ]] && exit 0
 
@@ -159,18 +223,23 @@ function deleteEnvironment {
     fi
 
     podman volume rm "${workDirBaseName}_hookshotEncryptionData"
+    podman volume rm "${workDirBaseName}_masPostgresData"
     podman volume rm "${workDirBaseName}_postgresData"
     podman volume rm "${workDirBaseName}_redisData"
     [[ -f "$composeFile" ]] && rm -rf "$composeFile"
     [[ -f "$elementConfigFile" ]] && rm -rf "$elementConfigFile"
     [[ -d "$hookshotData" ]] && rm -rf "$hookshotData"
+    [[ -f "$masConfigFile" ]] && rm -rf "$masConfigFile"
+    [[ -f "$nginxConfigFile" ]] && rm -rf "$nginxConfigFile"
     [[ -d "$synapseData" ]] && rm -rf "$synapseData"
 }
 
 # Create the Podman compose file
 function generatePodmanCompose {
     if [[ "$enableHookshot" == true ]]; then
-        synapseAdditionalVolumes+=("$hookshotRegistrationFile:/appservices/hookshot.yaml")
+        synapseAdditionalVolumes+=(
+          "$hookshotRegistrationFile:/appservices/hookshot.yaml"
+        )
     fi
 
     synapseAdditionalVolumesYaml=""
@@ -187,15 +256,28 @@ function generatePodmanCompose {
     fi
 
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ ! -f "$composeFile" ]] || [[ "$verification" == "y" ]] && cat <<EOT > "$composeFile"
+    [[ ! -f "$composeFile" ]] || [[ "$verification" == "y" ]] && \
+        cat <<EOT > "$composeFile"
 # This file is managed by $scriptPath
 
 volumes:
     hookshotEncryptionData:
+    masPostgresData:
     postgresData:
     redisData:
 
 services:
+  nginx:
+    container_name: $workDirBaseName-nginx
+    image: $nginxImage
+    restart: unless-stopped
+    volumes:
+    - $nginxConfigFile:/etc/nginx/conf.d/custom.conf
+    ports:
+    - "$ingressPort:80"
+    environment:
+    - NGINX_PORT=80
+
   synapse:
     container_name: $workDirBaseName-synapse
     image: $synapseImage
@@ -205,8 +287,8 @@ services:
     environment:
       - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
     ports:
-      - 127.0.0.1:8008-8009:8008-8009/tcp
-      - 127.0.0.1:$synapsePort:$synapsePort/tcp
+      - 127.0.0.1:47601-47602:8008-8009/tcp
+      - 127.0.0.1:47600:8448/tcp
     volumes:
       - $synapseData:/data:Z$synapseAdditionalVolumesYaml
 
@@ -219,13 +301,14 @@ services:
       - POSTGRES_PASSWORD=password
       - POSTGRES_USER=synapse
     ports:
-      - 127.0.0.1:$portgresPort:5432/tcp
+      - 127.0.0.1:47610:5432/tcp
     volumes:
       - postgresData:/var/lib/postgresql/data
 EOT
 
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ "$enableAdminer" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
+    [[ "$enableAdminer" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
 
   adminer:
     container_name: $workDirBaseName-adminer
@@ -234,11 +317,12 @@ EOT
     environment:
       - ADMINER_DEFAULT_SERVER=postgres
     ports:
-      - 127.0.0.1:$adminerPort:8080/tcp
+      - 127.0.0.1:47603:8080/tcp
 EOT
 
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ "$enableElementWeb" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
+    [[ "$enableElementWeb" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
 
   elementweb:
     container_name: $workDirBaseName-elementweb
@@ -247,13 +331,54 @@ EOT
     environment:
       - ELEMENT_WEB_PORT=8080
     ports:
-      - 127.0.0.1:$elementPort:8080/tcp
+      - 127.0.0.1:47604:8080/tcp
     volumes:
         - $elementConfigFile:/app/config.json:Z
 EOT
 
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ "$enableSynapseAdmin" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
+    [[ "$enableMas" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
+
+  mas:
+    container_name: $workDirBaseName-mas
+    image: $masImage
+    restart: unless-stopped
+    environment:
+      - MAS_CONFIG=/config.yaml
+    ports:
+      - 127.0.0.1:47605:8080/tcp
+    volumes:
+      - $masConfigFile:/config.yaml:Z
+
+  mas-postgres:
+    container_name: $workDirBaseName-mas-postgres
+    image: $postgresImage
+    restart: unless-stopped
+    environment:
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_USER=mas
+    ports:
+      - 127.0.0.1:47609:5432/tcp
+    volumes:
+      - masPostgresData:/var/lib/postgresql/data
+EOT
+
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableMailhog" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
+
+  mailhog:
+    container_name: $workDirBaseName-mailhog
+    image: $mailhogImage
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:47612:8025
+EOT
+
+    # If user agreed to overwrite AND the target file to overwrite exists
+    [[ "$enableSynapseAdmin" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
 
   synapseadmin:
     container_name: $workDirBaseName-synapseadmin
@@ -262,18 +387,19 @@ EOT
     environment:
       - SERVER_PORT=8080
     ports:
-      - 127.0.0.1:$synapseAdminPort:8080/tcp
+      - 127.0.0.1:47611:8080/tcp
 EOT
 
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ "$enableHookshot" == true ]] && [[ "$verification" == "y" ]] && cat <<EOT >> "$composeFile"
+    [[ "$enableHookshot" == true ]] && [[ "$verification" == "y" ]] && \
+        cat <<EOT >> "$composeFile"
 
   hookshot:
     container_name: $workDirBaseName-hookshot
     image: $hookshotImage
     ports:
-      - 127.0.0.1:$hookshotWebhooksPort:$hookshotWebhooksPort
-      - 127.0.0.1:$hookshotWidgetsPort:$hookshotWidgetsPort
+      - 127.0.0.1:47607:9993
+      - 127.0.0.1:47606:9993
     restart: unless-stopped
     volumes:
       - $hookshotData:/data:Z
@@ -284,7 +410,7 @@ EOT
     container_name: $workDirBaseName-redis
     image: $redisImage
     ports:
-      - 127.0.0.1:6379:6379
+      - 127.0.0.1:47608:6379
     restart: unless-stopped
     volumes:
       - redisData:/data
@@ -293,10 +419,12 @@ EOT
 
 # Generate Element Web config if not present or ask to overwrite
 function generateElementConfig {
-    [[ -f "$elementConfigFile" ]] && read -rp "Overwrite $elementConfigFile? [y/N]: " verification
+    [[ -f "$elementConfigFile" ]] && \
+        read -rp "Overwrite $elementConfigFile? [y/N]: " verification
     
     # If user agreed to overwrite AND the target file to overwrite exists
-    [[ ! -f "$elementConfigFile" ]] || [[ "$verification" == "y" ]] && cat <<EOT > "$elementConfigFile"
+    [[ ! -f "$elementConfigFile" ]] || [[ "$verification" == "y" ]] && \
+        cat <<EOT > "$elementConfigFile"
 {
     "${workDirBaseName}_notice": "This file is managed by $scriptPath",
     "bug_report_endpoint_url": "https://element.io/bugreports/submit",
@@ -305,7 +433,7 @@ function generateElementConfig {
     "default_federate": true,
     "default_server_config": {
         "m.homeserver": {
-            "base_url": "http://$serverName",
+            "base_url": "http://$synapseHost:$listenPort",
             "server_name": "$serverName"
         },
         "m.identity_server": {
@@ -322,6 +450,7 @@ function generateElementConfig {
         "url": "https://call.element.io"
     },
     "enable_presence_by_hs_url": {
+        "http://$synapseHost:$listenPort": $synapseEnablePresence,
         "http://$serverName": $synapseEnablePresence
     },
     "features": {
@@ -371,7 +500,8 @@ function generateHookshotConfig {
     msg="Overwrite $hookshotConfigFile and $hookshotRegistrationFile? [y/N]: "
     [[ -f "$hookshotConfigFile" ]] && read -rp "$msg" verification
 
-    if [[ ! -f "$hookshotConfigFile" ]] || [[ "$verification" == "y" ]]; then
+    if [[ "$enableHookshot" == true && (! -f "$hookshotConfigFile" || "$verification" == "y") ]]
+    then
         ## Cleanup everything and recreate directories
         [[ -d "$hookshotData" ]] && rm -rf "$hookshotData"
         mkdir -p "$hookshotData"
@@ -384,13 +514,11 @@ bot:
 bridge:
   bindAddress: 0.0.0.0
   domain: $serverName
-  mediaUrl: http://$serverName
+  mediaUrl: http://$synapseHost:$listenPort
   port: 9993
-  url: http://synapse:$synapsePort
+  url: http://synapse:8448
 cache:
   redisUri: redis://redis:6379
-encryption:
-  storagePath: /encryption
 feeds:
   enabled: true
   pollIntervalSeconds: 600
@@ -400,22 +528,19 @@ generic:
   enableHttpGet: false
   enabled: true
   outbound: true
-  urlPrefix: http://localhost:$hookshotWebhooksPort/webhook/
+  urlPrefix: http://$hookshotHost:$listenPort/webhook/
   userIdPrefix: _webhooks_
   waitForComplete: false
 listeners:
   - bindAddress: 0.0.0.0
-    port: $hookshotWebhooksPort
+    port: 9993
     resources:
       - webhooks
+      - widgets
   - bindAddress: 0.0.0.0
     port: 9101
     resources:
       - metrics
-  - bindAddress: 0.0.0.0
-    port: $hookshotWidgetsPort
-    resources:
-      - widgets
 logging:
   colorize: true
   json: false
@@ -436,11 +561,16 @@ widgets:
     widgetTitle: Hookshot Configuration
   disallowedIpRanges: []
   openIdOverrides:
-    $serverName: http://synapse:$synapsePort
-  publicUrl: http://localhost:$hookshotWidgetsPort/widgetapi/v1/static/
+    $serverName: http://synapse:8448
+  publicUrl: http://$hookshotHost:$listenPort/widgetapi/v1/static/
   roomSetupWidget:
     addOnInvite: false
 EOT
+
+        if [[ "$hookshotEncryption" == true ]]; then
+            yq --inplace '.encryption.storagePath = "/encryption"'  
+                "$hookshotConfigFile"
+        fi
 
         # Hookshot registration file
         cat <<EOT > "$hookshotRegistrationFile"
@@ -521,11 +651,263 @@ EOT
     fi
 }
 
+# Generate MAS config if not present or ask to overwrite
+function generateMasConfig {
+    [[ -f "$masConfigFile" ]] && 
+        read -rp "Overwrite $masConfigFile? [y/N]: " verification
+    
+    # If user agreed to overwrite AND the target file to overwrite exists
+    # AND MAS is enabled
+    if [[ "$enableMas" == true && (! -f "$masConfigFile" || "$verification" == "y") ]]
+    then
+        # Delete the files so MAS can re-generate them
+        [[ -f "$masConfigFile" ]] && rm "$masConfigFile"
+
+        # Use MAS' built-in executable to generate default config file
+        podman run \
+          --interactive \
+          --quiet \
+          --rm \
+          --tty \
+          "$masImage" \
+          config generate | grep -v INFO > "$masConfigFile"
+
+        yq --inplace 'del(.http.trusted_proxies)' "$masConfigFile"
+        yq --inplace 'del(.http.listeners[0].binds[0])' "$masConfigFile"
+        yq --inplace 'del(.database)' "$masConfigFile"
+        export masManagement="http://$masHost:$listenPort"
+        export swaggerCallback="http://$masHost:$listenPort/api/doc/oauth2-callback"
+        yq --inplace '
+            .account.password_registration_enabled = true |
+            .clients[0].client_auth_method = "client_secret_basic" |
+            .clients[0].client_id = "0000000000000000000SYNAPSE" |
+            .clients[0].client_secret = "secret" |
+            .clients[1].client_auth_method = "client_secret_post" |
+            .clients[1].client_id = "01JTTHHQBMKE8W3VCXRVFVW04P" |
+            .clients[1].client_secret = "secret" |
+            .clients[1].redirect_uris[0] = "https://element-hq.github.io/matrix-authentication-service/api/oauth2-redirect.html" |
+            .clients[1].redirect_uris[0] = env(swaggerCallback) |
+            .database.database = "mas" |
+            .database.host = "mas-postgres" |
+            .database.password = "password" |
+            .database.port = 5432 |
+            .database.username = "mas" |
+            .experimental.access_token_ttl = 86400 |
+            .experimental.compat_token_ttl = 86400 |
+            .experimental.inactive_session_expiration.expire_compat_sessions = false |
+            .experimental.inactive_session_expiration.ttl = 86400 |
+            .http.issuer = env(masManagement) |
+            .http.listeners[0].binds[0].host = "0.0.0.0" |
+            .http.listeners[0].binds[0].port = 8080 |
+            .http.listeners[0].resources += [{"name": "adminapi"}] |
+            .http.public_base = env(masManagement) |
+            .http.trusted_proxies[0] = "0.0.0.0/0" |
+            .matrix.endpoint = "http://synapse:8448/" |
+            .matrix.homeserver = env(serverNameEnv) |
+            .matrix.secret = "secret" |
+            .passwords.minimum_complexity = 0 |
+            .policy.client_registration.allow_host_mismatch = true |
+            .policy.client_registration.allow_insecure_uris = true |
+            .policy.client_registration.allow_missing_client_uri = true |
+            .policy.data.admin_clients[0] = "0000000000000000000SYNAPSE" |
+            .policy.data.admin_clients[1] = "01JTTHHQBMKE8W3VCXRVFVW04P" |
+            .policy.data.admin_users[0] = "admin"
+        ' "$masConfigFile"
+        export masManagement="http://$masHost:$listenPort/"
+        yq --inplace '
+          .enable_registration = false |
+          .experimental_features.msc3861.account_management_url = env(masManagement) |
+          .experimental_features.msc3861.admin_token = "secret" |
+          .experimental_features.msc3861.client_auth_method = "client_secret_basic" |
+          .experimental_features.msc3861.client_id = "0000000000000000000SYNAPSE" |
+          .experimental_features.msc3861.client_secret = "secret" |
+          .experimental_features.msc3861.enabled = true |
+          .experimental_features.msc3861.introspection_endpoint = "http://mas:8080/oauth2/introspect" |
+          .experimental_features.msc3861.issuer = "http://mas:8080/"
+        ' "$synapseConfigFile"
+
+        if [[ "$enableMailhog" == true ]]; then
+            export masEmailFrom="mas@$serverName"
+            yq --inplace '
+                .email.from = env(masEmailFrom) |
+                .email.hostname = "mailhog" |
+                .email.mode = "plain" |
+                .email.port = 1025 |
+                .email.reply_to = env(masEmailFrom) |
+                .email.transport = "smtp"
+            ' "$masConfigFile"
+        fi
+    fi
+}
+
+# Generate Nginx config if not present or ask to overwrite
+function generateNginxConfig {
+    [[ -f "$nginxConfigFile" ]] && \
+        read -rp "Overwrite $nginxConfigFile? [y/N]: " verification
+    
+    # If user agreed to overwrite AND the target file to overwrite exists
+    if [[ ! -f "$nginxConfigFile" ]] || [[ "$verification" == "y" ]]; then
+        cat <<EOT > "$nginxConfigFile"
+# Well-known
+server {
+    listen       80;
+    server_name  $serverName;
+    location /.well-known/matrix/client {
+        return 200 '{"m.homeserver":{"base_url":"http://$synapseHost:$listenPort"}}';
+        add_header Content-Type application/json;
+        add_header 'Access-Control-Allow-Origin' '*';
+    }
+    location /.well-known/matrix/server {
+        return 200 '{"m.server": "$synapseHost:$listenPort"}';
+        add_header Content-Type application/json;
+    }
+}
+EOT
+        [[ "$enableMas" == false ]] && cat <<EOT >> "$nginxConfigFile"
+# Synapse
+server {
+    listen       80;
+    server_name  $synapseHost;
+    location ~ ^(/_matrix|/_synapse/client|/_synapse/admin) {
+        proxy_pass http://synapse:8448;
+        client_max_body_size 50M;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host:\$server_port;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOT
+
+        [[ "$enableMas" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Synapse
+server {
+    listen       80;
+    server_name  $synapseHost;
+    location ~ ^/_matrix/client/(.*)/(login|logout|refresh) {
+        proxy_pass http://mas:8080;
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    location ~ ^(/_matrix|/_synapse/client|/_synapse/admin) {
+        proxy_pass http://synapse:8448;
+        client_max_body_size 50M;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host:\$server_port;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+# MAS
+server {
+    listen       80;
+    server_name  $masHost;
+    location / {
+        proxy_pass http://mas:8080;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+
+        [[ "$enableMailhog" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Mailhog
+server {
+    listen       80;
+    server_name  $mailhogHost;
+    location / {
+        proxy_pass http://mailhog:8025;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+
+        [[ "$enableElementWeb" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Element Web
+server {
+    listen       80;
+    server_name  $elementHost;
+    location / {
+        proxy_pass http://elementweb:8080;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+
+        [[ "$enableHookshot" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Hookshot
+server {
+    listen       80;
+    server_name  $elementHost;
+    location / {
+        proxy_pass http://hookshot:9993;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+
+        [[ "$enableSynapseAdmin" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Synapse Admin
+server {
+    listen       80;
+    server_name  $synapseAdminHost;
+    location / {
+        proxy_pass http://synapseadmin:8080;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+
+        [[ "$enableAdminer" == true ]] && cat <<EOT >> "$nginxConfigFile"
+# Adminer
+server {
+    listen       80;
+    server_name  $adminerHost;
+    location / {
+        proxy_pass http://adminer:8080;
+        add_header Content-Security-Policy "frame-ancestors 'self'";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options SAMEORIGIN;
+        add_header X-XSS-Protection "1; mode=block";
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOT
+    fi
+}
+
 # Generate Synapse config if not present or ask to overwrite
 function generateSynapseConfig {
-    # Ask the user to overwtie if EITHER the Syanspe config file OR Synapse log config file exists
+    # Ask the user to overwrite if EITHER the Synapse config file OR
+    # Synapse log config file exists
     [[ -f "$synapseConfigFile" ]] || [[ -f "$synapseLogConfigFile" ]] && \
-        read -rp "Overwrite $synapseConfigFile and $synapseLogConfigFile? [y/N]: " verification
+        read -rp "Overwrite $synapseConfigFile and \
+$synapseLogConfigFile? [y/N]: " verification
 
     if  [[ ! -f "$synapseConfigFile" ]] || [[ "$verification" == "y" ]]; then
         # Delete the files so Synapse can re-generate them
@@ -552,7 +934,8 @@ function generateSynapseConfig {
         mv "$synapseGeneratedLogConfigFile" "$synapseLogConfigFile"
 
         # Customize Synapse config
-        yq --inplace '.handlers.file.filename = "/data/homeserver.log"' "$synapseLogConfigFile"
+        yq --inplace '.handlers.file.filename = "/data/homeserver.log"' \
+            "$synapseLogConfigFile"
         yq --inplace 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
         yq --inplace '
             .database.args.cp_max = 10 |
@@ -565,8 +948,9 @@ function generateSynapseConfig {
             .enable_registration = true |
             .enable_registration_without_verification = true |
             .listeners[0].bind_addresses[0] = "0.0.0.0" |
-            .listeners[0].port = env(synapsePortEnv) |
+            .listeners[0].port = 8448 |
             .log_config = "/data/log.config.yaml" |
+            .password_config.pepper = "s3cr3tP3pp3r" |
             .presence.enabled = env(synapseEnablePresenceEnv) |
             .suppress_key_server_warning = true |
             .suppress_key_server_warning = true |
@@ -576,7 +960,9 @@ function generateSynapseConfig {
             .user_directory.search_all_users = true
         ' "$synapseConfigFile"
 
-        if [[ "$enableHookshot" == true ]]; then
+        if [[ "$enableHookshot" == true ]] && \
+            [[ "$hookshotEncryption" == true ]]
+        then
             yq --inplace '
                 .app_service_config_files[0] = "/appservices/hookshot.yaml" |
                 .experimental_features.msc2409_to_device_messages_enabled = true |
@@ -589,10 +975,21 @@ function generateSynapseConfig {
 
 # Print links
 function printLinks {
-    links="Links:\n\n- Synapse: http://localhost:$synapsePort/_matrix/static"
-    [[ "$enableAdminer" == true ]] && links+="\n- Adminer: http://localhost:$portgresPort"
-    [[ "$enableElementWeb" == true ]] && links+="\n- Element Web: http://localhost:$elementPort"
-    [[ "$enableSynapseAdmin" == true ]] && links+="\n- Synapse Admin: http://localhost:$synapseAdminPort"
+    links="Links:\n\n- Synapse server name: $serverName"
+    links+="\n- Synapse endpoint:    http://$synapseHost:$listenPort"
+    [[ "$enableAdminer" == true ]] && \
+        links+="\n- Adminer:             http://$adminerHost:$listenPort"
+    [[ "$enableElementWeb" == true ]] && \
+        links+="\n- Element Web:         http://$elementHost:$listenPort"
+    [[ "$enableMas" == true ]] && \
+        links+="\n- MAS:                 http://$masHost:$listenPort"
+    [[ "$enableMas" == true ]] && \
+        links+="\n- MAS Swagger UI:      http://$masHost:$listenPort/api/doc/"
+    [[ "$enableMailhog" == true ]] && \
+        links+="\n- Mailhog:             http://$mailhogHost:$listenPort"
+    [[ "$enableSynapseAdmin" == true ]] && \
+        links+="\n- Synapse Admin:       http://$synapseAdminHost:$listenPort?\
+username=admin&password=admin&server=http://$synapseHost:$listenPort"
 
     echo -e "$links"                
 }
@@ -606,15 +1003,6 @@ function pullImages {
     fi
 }
 
-# Create/Start/Restart containers
-function restartAll {
-    if [[ "$composeDash" == "true" ]]; then
-        podman-compose up --detach --force-recreate
-    else
-        podman compose up --detach --force-recreate --remove-orphans
-    fi
-}
-
 # Restart the Element Web container
 function restartElement {
     podman restart "$workDirBaseName-elementweb"
@@ -623,6 +1011,19 @@ function restartElement {
 # Restart the Hookshot container
 function restartHookshot {
     podman restart "$workDirBaseName-hookshot"
+}
+
+# Restart the MAS container
+function restartMas {
+    podman restart "$workDirBaseName-mas"
+    podman exec --interactive --tty "$workDirBaseName-mas" mas-cli config check
+    podman exec --interactive --tty \
+        "$workDirBaseName-mas" mas-cli config sync --prune
+}
+
+# Restart the Nginx container
+function restartNginx {
+    podman restart "$workDirBaseName-nginx"
 }
 
 # Restart the Synapse container
@@ -644,31 +1045,51 @@ function stopEnvironment {
     fi
 }
 
+# Create/Start/Restart containers
+function restartAll {
+    if [[ "$composeDash" == "true" ]]; then
+        podman-compose up --detach --force-recreate
+    else
+        podman compose up --detach --force-recreate --remove-orphans
+    fi
+    restartNginx
+}
+
+
 checkRequiredPrograms
 checkRequiredDirectories
 
 case $1 in
-    admin)      createAdminAccount          ;;
-    delete)     deleteEnvironment           ;;
-    gencom)     generatePodmanCompose       ;;
-    genele)     generateElementConfig       ;;
-    genhook)    generateHookshotConfig      ;;
-    gensyn)     generateSynapseConfig       ;;
-    links)      printLinks                  ;;
-    pull)       pullImages                  ;;
-    rsa)        restartAll                  ;;
-    rse)        restartElement              ;;
-    rsh)        restartHookshot             ;;
-    rss)        restartSynapse              ;;
-    rssa)       restartSynapseAdmin         ;;
+    admin)      createAdminAccount                  ;;
+    comp)       createCompatibilityToken            ;;
+    delete)     deleteEnvironment                   ;;
+    gencom)     generatePodmanCompose               ;;
+    genele)     generateElementConfig               ;;
+    genhook)    generateHookshotConfig              ;;
+    genmas)     generateMasConfig                   ;;
+    genng)      generateNginxConfig                 ;;
+    gensyn)     generateSynapseConfig               ;;
+    links)      printLinks                          ;;
+    pull)       pullImages                          ;;
+    rsa)        restartAll                          ;;
+    rse)        restartElement; restartNginx        ;;
+    rsh)        restartHookshot; restartNginx       ;;
+    rsm)        restartMas; restartNginx            ;;
+    rsn)        restartNginx                        ;;
+    rss)        restartSynapse; restartNginx        ;;
+    rssa)       restartSynapseAdmin; restartNginx   ;;
     setup)
         generatePodmanCompose
+        generateNginxConfig
         generateElementConfig
         generateHookshotConfig
         generateSynapseConfig
+        generateMasConfig
         pullImages
         restartAll
         ;;
     stop)       stopEnvironment             ;;
     *)          help                        ;;
 esac
+
+
