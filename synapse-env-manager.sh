@@ -455,6 +455,7 @@ function generateElementConfig {
     },
     "features": {
         "feature_jump_to_date": true,
+        "feature_release_announcement": false,
         "feature_state_counters": true
     },
     "integrations_rest_url": "https://scalar.vector.im/api",
@@ -703,6 +704,7 @@ function generateMasConfig {
             .http.public_base = env(masManagement) |
             .http.trusted_proxies[0] = "0.0.0.0/0" |
             .matrix.endpoint = "http://synapse:8448/" |
+            .matrix.kind = "synapse" |
             .matrix.homeserver = env(serverNameEnv) |
             .matrix.secret = "secret" |
             .passwords.minimum_complexity = 0 |
@@ -716,14 +718,9 @@ function generateMasConfig {
         export masManagement="http://$masHost:$listenPort/"
         yq --inplace '
           .enable_registration = false |
-          .experimental_features.msc3861.account_management_url = env(masManagement) |
-          .experimental_features.msc3861.admin_token = "secret" |
-          .experimental_features.msc3861.client_auth_method = "client_secret_basic" |
-          .experimental_features.msc3861.client_id = "0000000000000000000SYNAPSE" |
-          .experimental_features.msc3861.client_secret = "secret" |
-          .experimental_features.msc3861.enabled = true |
-          .experimental_features.msc3861.introspection_endpoint = "http://mas:8080/oauth2/introspect" |
-          .experimental_features.msc3861.issuer = "http://mas:8080/"
+          .matrix_authentication_service.enabled = true |
+          .matrix_authentication_service.endpoint = "http://mas:8080/" |
+          .matrix_authentication_service.secret = "secret"
         ' "$synapseConfigFile"
 
         if [[ "$enableMailhog" == true ]]; then
