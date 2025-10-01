@@ -4,15 +4,15 @@ Quickly spin up a Synapse and friends in Podman for testing.
 
 Currently supported services:
 
--   [Synapse](https://element-hq.github.io/synapse/latest/) with Postgres
+- [Synapse](https://element-hq.github.io/synapse/latest/) with Postgres
     database
--   [Matrix Authentication Service](https://element-hq.github.io/matrix-authentication-service/)
+- [Matrix Authentication Service](https://element-hq.github.io/matrix-authentication-service/)
     with Postgres database
--   [Mailhog](https://github.com/mailhog/MailHog)
--   [Element Web](https://web-docs.element.dev/)
--   [Hookshot](https://matrix-org.github.io/matrix-hookshot/latest/index.html)
--   [Adminer](https://www.adminer.org/en/)
--   [Synapse Admin](https://github.com/etkecc/synapse-admin)
+- [Mailhog](https://github.com/mailhog/MailHog)
+- [Element Web](https://web-docs.element.dev/)
+- [Hookshot](https://matrix-org.github.io/matrix-hookshot/latest/index.html)
+- [Adminer](https://www.adminer.org/en/)
+- [Synapse Admin](https://github.com/etkecc/synapse-admin)
 
 **DO NOT USE THIS SCRIPT IN PRODUCTION**
 
