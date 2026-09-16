@@ -8,11 +8,12 @@ Currently supported services:
     database
 - [Matrix Authentication Service](https://element-hq.github.io/matrix-authentication-service/)
     with Postgres database
-- [Mailhog](https://github.com/mailhog/MailHog)
+- [Element Admin](https://github.com/element-hq/element-admin)
 - [Element Web](https://web-docs.element.dev/)
 - [Hookshot](https://matrix-org.github.io/matrix-hookshot/latest/index.html)
 - [Adminer](https://www.adminer.org/en/)
-- [Synapse Admin](https://github.com/etkecc/synapse-admin)
+- [Ketesa](https://github.com/etkecc/ketesa)
+- [Mailhog](https://github.com/mailhog/MailHog)
 
 **DO NOT USE THIS SCRIPT IN PRODUCTION**
 
@@ -32,17 +33,20 @@ Options:
     genhook:    Regenerate the Hookshot config file.
     genmas:     Regenerate the Matrix-Authentication-Service config file.
     genng:      Regenerate the Nginx config file.
+    genssl:     Regenerate SSL certificate.
     gensyn:     Regenerate the Synapse config and log config files.
     help:       This help text.
     links:      Print links.
+    ps:         podman compose ps
     pull:       Pull all container images.
     rsa:        Restart all containers.
-    rse:        Restart the Element Web container.
+    rsea:       Restart the Element Admin container.
+    rsew:       Restart the Element Web container.
     rsh:        Restart the Hookshot container.
+    rsk:        Restart the Ketesa container.
     rsm:        Restart the Matrix-Authentication-Service container.
     rsn:        Restart the Nginx container.
     rss:        Restart the Synapse container.
-    rssa:       Restart the Synapse Admin container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
 
@@ -53,10 +57,33 @@ containers. Synapse/Postgres/Hookshot/Redis data is not deleted.
 ## Setup
 
 Optionally copy `config.example.env` to `config.env` and edit as needed. Any
-setting not specified in the config file will use defaults.
+setting not specified in the config file will use defaults. The example config
+file shows all defaults.
 
-Install [yq](https://mikefarah.gitbook.io/yq/) version 4.18.1 or later, podman,
-and podman-compose if you don't have them.
+Set hostnames in your `/etc/hosts` file or DNS server
+
+```plaintext
+127.0.0.1 matrix.local
+127.0.0.1 admin.matrix.local
+127.0.0.1 adminer.matrix.local
+127.0.0.1 element.matrix.local
+127.0.0.1 hookshot.matrix.local
+127.0.0.1 ketesa.matrix.local
+127.0.0.1 mailhog.matrix.local
+127.0.0.1 mas.matrix.local
+127.0.0.1 synapse.matrix.local
+```
+
+Redirect port 443 to 8443 to avoid needing elevated permissions for the Nginx
+container
+
+```bash
+sudo iptables -t nat -A OUTPUT -o lo -p tcp --dport=443 -j REDIRECT \
+    --to-port=8443
+```
+
+Install [yq](https://mikefarah.gitbook.io/yq/) version 4.18.1 or later, mkcert,
+podman, and podman compose if you don't have them.
 
 Run `./synapse-env-manager.sh setup` to generate the environment. This will also
 generate the needed config files.
@@ -66,68 +93,32 @@ The directories `synapse`, and `hookshot`, and the files `compose.yaml`,
 directory where the `synapse-env-manager.sh` script is placed. If these already
 exists, you may loose data stored in them.
 
-It will take a minute after you create the database for Synapse to start
-properly as it restarts a few times while Postgres initializes the database.
+The script will also generate a wildcard SSL certificate using `mkcert` to the
+same directory with the file names `$serverName-public.pem` and
+`$serverName-private.pem`. Run `mkcert -install` to install these certificates
+on your system. This can be uninstalled with `mkcert -uninstall`.
+
+In LibreWolf, manually add `~/.local/share/mkcert/rootCA.pem` in Settings ->
+Privacy and Security -> Connection and software security:Advanced Settings ->
+Certificates:Manage certificates -> Import.
 
 Run `./synapse-env-manager.sh admin` to create an admin user (username and
 password: admin)  
 Run `./synapse-env-manager.sh links` to print a list of all links for your
 environment.
 
-## Use port 80 instead of 8080 to access services
-
-```bash
-sudo iptables -t nat -A OUTPUT -o lo \
-    -p tcp --dport 80 -j REDIRECT --to-port 8080
-```
-
-Then set this in your config.env
-
-```env
-listenPort=80
-```
-
 ## MAS
 
 MAS is enabled by default. Disable it with `enableMas=false`. You must delete
-the environment after changing enabling or disabling MAS. Or migrate manually
-after changing. This script do not have support for automated migration.
+the environment after enabling or disabling MAS. Or migrate manually after
+changing. This script do not have support for automated migration.
 
-To authenticate with the MAS Admin API, use client ID
-`0000000000000000000SYNAPSE` and client secret `secret`. For the Swagger UI, use
-client ID `01JTTHHQBMKE8W3VCXRVFVW04P` and secret `secret`.
+To authenticate with the MAS Admin API, use a Personal Token (recommended) or
+the client ID `0000000000000000000SYNAPSE` and client secret `secret`. For the
+Swagger UI, use client ID `01JTTHHQBMKE8W3VCXRVFVW04P` and secret `secret`.
 
-As MAS requires email verification for user registration, a Mailhog instance is
-setup by default when MAS is enabled. Use any email address during registration
-and open the Mailhog link to get the email.
+## Email
 
-## Host names
-
-Must be used on Mac since only 127.0.0.1 resolves to loopback, not the rest of
-the 127.0.0.0/8 net...
-
-`/etc/hosts`
-
-```plaintext
-127.0.0.1 matrix.local
-127.0.0.1 synapse.matrix.local
-127.0.0.1 mas.matrix.local
-127.0.0.1 mailhog.matrix.local
-127.0.0.1 element.matrix.local
-127.0.0.1 hookshot.matrix.local
-127.0.0.1 admin.matrix.local
-127.0.0.1 adminer.matrix.local
-```
-
-`config.env`
-
-```plaintext
-serverName="matrix.local"
-synapseHost="synapse.matrix.local"
-masHost="mas.matrix.local"
-mailhogHost="mailhog.matrix.local"
-elementHost="element.matrix.local"
-hookshotHost="hookshot.matrix.local"
-synapseAdminHost="admin.matrix.local"
-adminerHost="adminer.matrix.local"
-```
+Email verification for user registration is disabled by default. To test email,
+set `enableEmail=true`. When this is set, email config is added to Synapse and
+MAS. Use any email address and open the Mailhog link to get the email.

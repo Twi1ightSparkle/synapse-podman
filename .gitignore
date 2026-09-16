@@ -3,5 +3,6 @@ config.env
 elementConfig.json
 hookshot
 masConfig.yaml
+matrix.local-*.pem
 nginx.conf
 synapse
