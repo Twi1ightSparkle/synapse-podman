@@ -46,6 +46,8 @@ Options:
     rsk:        Restart the Ketesa container.
     rsm:        Restart the Matrix-Authentication-Service container.
     rsn:        Restart the Nginx container.
+    rspm:       Restart the MAS Postgres container.
+    rsps:       Restart the Synapse Postgres container.
     rss:        Restart the Synapse container.
     setup:      Create, edit, (re)start the environment.
     stop:       Stop the environment without deleting it.
@@ -122,3 +124,8 @@ Swagger UI, use client ID `01JTTHHQBMKE8W3VCXRVFVW04P` and secret `secret`.
 Email verification for user registration is disabled by default. To test email,
 set `enableEmail=true`. When this is set, email config is added to Synapse and
 MAS. Use any email address and open the Mailhog link to get the email.
+
+## Custom Postgres Config
+
+Set `customPostgresConfig=true`. This will fetch the sample config file from a
+temporary Postgres container and save it to the files `postgresql-mas.conf` and `postgresql-synapse.conf`. These are mounted to the MAS and Synapse Postgres containers.

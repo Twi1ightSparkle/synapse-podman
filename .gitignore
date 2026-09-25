@@ -5,4 +5,5 @@ hookshot
 masConfig.yaml
 matrix.local-*.pem
 nginx.conf
+postgresql-*.conf
 synapse
