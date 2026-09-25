@@ -90,7 +90,7 @@ EOT
 [[ ! "$enableEmail" ]] && enableEmail=false
 [[ ! "$mailhogImage" ]] && mailhogImage="docker.io/mailhog/mailhog:latest"
 
-[[ ! "$postgresImage" ]] && postgresImage="docker.io/postgres:latest"
+[[ ! "$postgresImage" ]] && postgresImage="docker.io/postgres:18"
 [[ ! "$customPostgresConfig" ]] && customPostgresConfig=false
 
 [[ ! "$enableAdminer" ]] && enableAdminer=false
@@ -192,7 +192,7 @@ function podmanPermissions {
 }
 
 function simplePodman {
-    local -r command="$1"
+    local command="$1"
     if [[ "$composeDash" == true ]]; then
         podman-compose "$command"
     else
@@ -279,6 +279,7 @@ function checkOverwrite {
     shift
 
     local existingCount=0
+    local path
     for path in "$@"; do
         [[ -e "$path" ]] && (( existingCount+=1 ))
     done
@@ -313,6 +314,17 @@ function healthcheck {
 EOT
 }
 
+# The MAS bits in Synapses config file
+function masSynapseConfig {
+    export masManagement="https://$masHost:$listenPort/"
+    yq --inplace '
+        .enable_registration = false |
+        .matrix_authentication_service.enabled = true |
+        .matrix_authentication_service.endpoint = "http://mas:8080/" |
+        .matrix_authentication_service.secret = "secret"
+    ' "$synapseConfigFile"
+}
+
 # Fetch Postgres sample config file from container
 function fetchPostgresConfig {
     local overwrite=0
@@ -342,6 +354,7 @@ function generatePodmanCompose {
     fi
 
     synapseAdditionalVolumesYaml=""
+    local volume
     for volume in "${synapseAdditionalVolumes[@]}"; do
         synapseAdditionalVolumesYaml+="
       - $volume:z"
@@ -544,7 +557,9 @@ EOT
 
         export cmd="postgres -c config_file=/etc/postgresql/postgresql.conf"
         yq --inplace '.services.postgres.command += env(cmd)' "$composeFile"
-        yq --inplace '.services.mas-postgres.command += env(cmd)' "$composeFile"
+        [[ "$enableMas" == true ]] && \
+            yq --inplace '.services.mas-postgres.command += env(cmd)' \
+            "$composeFile"
     fi
 }
 
@@ -559,12 +574,12 @@ function generateElementConfig {
     "${workDirBaseName}_notice": "This file is managed by $scriptPath",
     "bug_report_endpoint_url": "https://element.io/bugreports/submit",
     "dangerously_allow_unsafe_and_insecure_passwords": true,
-    "default_country_code": "UK",
+    "default_country_code": "GB",
     "default_federate": true,
     "default_server_config": {
         "m.homeserver": {
             "base_url": "https://$synapseHost:$listenPort",
-            "server_name": "$serverName:"
+            "server_name": "$serverName"
         },
         "m.identity_server": {
             "base_url": "https://vector.im"
@@ -760,7 +775,7 @@ function generateMasConfig {
         .clients[1].client_id = "01JTTHHQBMKE8W3VCXRVFVW04P" |
         .clients[1].client_secret = "secret" |
         .clients[1].redirect_uris[0] = "https://element-hq.github.io/matrix-authentication-service/api/oauth2-redirect.html" |
-        .clients[1].redirect_uris[0] = env(swaggerCallback) |
+        .clients[1].redirect_uris[1] = env(swaggerCallback) |
         .database.database = "mas" |
         .database.host = "mas-postgres" |
         .database.password = "password" |
@@ -793,13 +808,8 @@ function generateMasConfig {
         .policy.data.admin_clients[1] = "01JTTHHQBMKE8W3VCXRVFVW04P" |
         .policy.data.admin_users[0] = "admin"
     ' "$masConfigFile"
-    export masManagement="https://$masHost:$listenPort/"
-    yq --inplace '
-        .enable_registration = false |
-        .matrix_authentication_service.enabled = true |
-        .matrix_authentication_service.endpoint = "http://mas:8080/" |
-        .matrix_authentication_service.secret = "secret"
-    ' "$synapseConfigFile"
+
+    masSynapseConfig
 
     if [[ "$enableEmail" == true ]]; then
         export masEmailFrom="mas@$serverName"
@@ -1000,7 +1010,6 @@ function generateSynapseConfig {
         .password_config.pepper = "s3cr3tP3pp3r" |
         .presence.enabled = env(synapseEnablePresenceEnv) |
         .suppress_key_server_warning = true |
-        .suppress_key_server_warning = true |
         .trusted_key_servers[0].accept_keys_insecurely = true |
         .user_directory.enabled = true |
         .user_directory.prefer_local_users = true |
@@ -1009,12 +1018,13 @@ function generateSynapseConfig {
 
     if [[ "$enableEmail" == true ]]; then
         export synapseEmailFrom="Your Friendly %(app)s homeserver <mas@$serverName>"
+        export elementUrl="https://$elementHost:$listenPort"
         yq --inplace '
-            .email.client_base_url = "https://element.matrix.local/" |
+            .email.client_base_url = env(elementUrl) |
             .email.enable_notifs = true |
             .email.enable_tls = false |
             .email.force_tls = false |
-            .email.invite_client_location = "https://element.matrix.local/" |
+            .email.invite_client_location = env(elementUrl) |
             .email.notif_for_new_users = true |
             .email.notif_from = env(synapseEmailFrom) |
             .email.require_transport_security = false |
@@ -1039,11 +1049,13 @@ function generateSynapseConfig {
             .experimental_features.msc3202_transaction_extensions = true
         ' "$synapseConfigFile"
     fi
+
+    [[ "$enableMas" == true ]] && masSynapseConfig
 }
 
 # Print links
 function printLinks {
-    links="Links:\n\n- Synapse server name: $serverName"
+    local links="Links:\n\n- Synapse server name: $serverName"
     links+="\n- Synapse endpoint:    https://$synapseHost:$listenPort"
     [[ "$enableElementAdmin" == true ]] && \
         links+="\n- Element Admin:       https://$elementAdminHost:$listenPort"

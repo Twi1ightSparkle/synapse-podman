@@ -90,7 +90,7 @@ podman, and podman compose if you don't have them.
 Run `./synapse-env-manager.sh setup` to generate the environment. This will also
 generate the needed config files.
 
-The directories `synapse`, and `hookshot`, and the files `compose.yaml`,
+The directories `synapse`, and `hookshot`, and the files `compose.yml`,
 `elementConfig.json`, `masConfig.yaml`, and `nginx.conf` will be created in the
 directory where the `synapse-env-manager.sh` script is placed. If these already
 exists, you may loose data stored in them.
