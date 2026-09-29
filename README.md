@@ -129,3 +129,23 @@ MAS. Use any email address and open the Mailhog link to get the email.
 
 Set `customPostgresConfig=true`. This will fetch the sample config file from a
 temporary Postgres container and save it to the files `postgresql-mas.conf` and `postgresql-synapse.conf`. These are mounted to the MAS and Synapse Postgres containers.
+
+## Database Info
+
+For connecting with Adminer or another database tool
+
+Synapse database:
+
+- System: `PostgreSQL`
+- Server: `postgres`
+- Username: `synapse`
+- Password: `password`
+- Database: `synapse`
+
+MAS database:
+
+- System: `PostgreSQL`
+- Server: `mas-postgres`
+- Username: `mas`
+- Password: `password`
+- Database: `mas`

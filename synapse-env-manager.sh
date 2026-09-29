@@ -1,6 +1,9 @@
 #!/bin/bash
 # shellcheck source=/dev/null
 
+# Make a pipeline fail if any command in it fails, not just the last one
+set -o pipefail
+
 # Quickly spin up a Synapse and friends in Podman for testing.
 # Copyright (C) 2025-2026  Twilight Sparkle
 #
@@ -19,7 +22,13 @@
 
 scriptPath="$(readlink -f "$0")"
 workDirFullPath="$(dirname "$scriptPath")"
+
 workDirBaseName="$(basename "$workDirFullPath")"
+# Compose project names may only contain a-z, 0-9, _ and -. Normalise it here
+# and pass it explicitly so container and volume names always match.
+workDirBaseName="${workDirBaseName,,}"
+workDirBaseName="${workDirBaseName//[^a-z0-9_-]/}"
+
 configFile="$workDirFullPath/config.env"
 
 function help {
@@ -60,7 +69,15 @@ EOT
 }
 
 # Load config
-[[ -f "$configFile" ]] && source "$configFile"
+if [[ -f "$configFile" ]]; then
+    # The config file is executed, so refuse it if others could have edited it
+    if [[ ! -O "$configFile" ]] || \
+        [[ -n "$(find "$configFile" -perm /022)" ]]; then
+        echo "$configFile must be owned by you and not writable by others" >&2
+        exit 1
+    fi
+    source "$configFile"
+fi
 
 # Set any defaults not specified in the config file
 [[ ! "$nginxImage" ]] && nginxImage="docker.io/nginx:latest"
@@ -130,6 +147,66 @@ if [[ "$enableSSL" != true ]]; then
     exit 1
 fi
 
+# Exit if the variable named $1 does not fully match the regex $2
+function validateValue {
+    local name="$1"
+    local regex="$2"
+    local value="${!name}"
+    if [[ ! "$value" =~ $regex ]]; then
+        echo "Invalid value for $name: '$value'" >&2
+        exit 1
+    fi
+}
+
+# Validate config values before they are used in commands, paths and files
+function validateConfig {
+    local -r hostRegex='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'
+    local -r portRegex='^[1-9][0-9]{0,4}$'
+    local -r boolRegex='^(true|false)$'
+    local -r imageRegex='^[A-Za-z0-9][A-Za-z0-9._/:@-]*$'
+    local -r volumeRegex='^[A-Za-z0-9._/+-]+:/[A-Za-z0-9._/+-]+$'
+    local name
+    local volume
+
+    for name in serverName adminerHost elementAdminHost elementHost \
+        hookshotHost ketesaHost mailhogHost masHost synapseHost; do
+        validateValue "$name" "$hostRegex"
+    done
+
+    for name in ingressPort listenPort; do
+        validateValue "$name" "$portRegex"
+        if (( ${!name} > 65535 )); then
+            echo "Invalid value for $name: '${!name}'" >&2
+            exit 1
+        fi
+    done
+
+    for name in enableSSL synapseEnablePresence enableMas enableEmail \
+        customPostgresConfig enableAdminer enableElementAdmin \
+        enableElementWeb enableHookshot hookshotEncryption enableKetesa; do
+        validateValue "$name" "$boolRegex"
+    done
+
+    for name in nginxImage synapseImage masImage mailhogImage postgresImage \
+        adminerImage elementAdminImage elementImage hookshotImage redisImage \
+        ketesaImage; do
+        validateValue "$name" "$imageRegex"
+    done
+
+    validateValue workDirBaseName '^[a-z0-9][a-z0-9_-]*$'
+    # Host paths are written unquoted into compose.yml
+    validateValue workDirFullPath '^/[A-Za-z0-9._/+-]+$'
+
+    for volume in "${synapseAdditionalVolumes[@]}"; do
+        if [[ ! "$volume" =~ $volumeRegex ]]; then
+            echo "Invalid synapseAdditionalVolumes entry: '$volume'" >&2
+            exit 1
+        fi
+    done
+}
+
+validateConfig
+
 # Vars
 nginxConfigFile="$workDirFullPath/nginx.conf"
 composeFile="$workDirFullPath/compose.yml"
@@ -157,13 +234,9 @@ postgresConfigFileSynapse="$workDirFullPath/postgresql-synapse.conf"
 # Is "podman compose" or "podman-compose" installed on this system
 composeDash=false
 
-# These variables needs to be exported so it can be used with yq
-export serverNameEnv="$serverName"
-export synapseEnablePresenceEnv="$synapseEnablePresence"
-
 # Check that required programs are installed on the system
 function checkRequiredPrograms {
-    local programs=(bash mkcert podman yq)
+    local programs=(bash mkcert openssl podman realpath yq)
     local missing=""
     local program
     for program in "${programs[@]}"; do
@@ -194,9 +267,9 @@ function podmanPermissions {
 function simplePodman {
     local command="$1"
     if [[ "$composeDash" == true ]]; then
-        podman-compose "$command"
+        podman-compose --project-name "$workDirBaseName" "$command"
     else
-        podman compose "$command"
+        podman compose --project-name "$workDirBaseName" "$command"
     fi
 }
 
@@ -210,7 +283,15 @@ function checkRequiredDirectories {
     local path
     for volume in "${synapseAdditionalVolumes[@]}"; do
         path="${volume%%:*}"
-        [[ -e "$path" ]] && podmanPermissions "$path" "991"
+        [[ "$path" != /* ]] && path="$workDirFullPath/$path"
+        path="$(realpath -e -- "$path" 2>/dev/null)" || continue
+
+        if [[ "$path" != "$workDirFullPath/"* ]]; then
+            echo "Not changing permissions on $path: it is outside \
+$workDirFullPath" >&2
+            continue
+        fi
+        podmanPermissions "$path" "991"
     done
 }
 
@@ -316,7 +397,6 @@ EOT
 
 # The MAS bits in Synapses config file
 function masSynapseConfig {
-    export masManagement="https://$masHost:$listenPort/"
     yq --inplace '
         .enable_registration = false |
         .matrix_authentication_service.enabled = true |
@@ -333,11 +413,13 @@ function fetchPostgresConfig {
     [[ "$overwrite" == 1 ]] && return 0
 
     touch "$postgresConfigFileSynapse"
-    podman run --entrypoint "/bin/bash" --interactive --rm --tty \
-        --volume "$postgresConfigFileSynapse":/tmp/postgresql.conf:Z \
-        "$postgresImage" \
-        -c "cat /usr/share/postgresql/postgresql.conf.sample \
-            > /tmp/postgresql.conf"
+    if ! podman run --entrypoint cat --rm "$postgresImage" \
+        /usr/share/postgresql/postgresql.conf.sample \
+        > "$postgresConfigFileSynapse"; then
+        echo "Failed to fetch the Postgres sample config" >&2
+        rm -f "$postgresConfigFileSynapse"
+        exit 1
+    fi
     cp "$postgresConfigFileSynapse" "$postgresConfigFileMas"
 }
 
@@ -534,7 +616,7 @@ EOT
   redis:
     command: redis-server --save 20 1 --loglevel warning
     container_name: $workDirBaseName-redis
-$(healthcheck "["CMD", "redis-cli", "--raw", "incr", "ping"]")
+$(healthcheck '["CMD", "redis-cli", "ping"]')
     image: $redisImage
     ports:
       - 127.0.0.1:47608:6379/tcp
@@ -701,7 +783,7 @@ metrics:
   enabled: true
 passFile: /data/passkey.pem
 permissions:
-  - actor: '*'
+  - actor: '$serverName'
     services:
       - level: admin
         service: '*'
@@ -721,12 +803,20 @@ EOT
         yq --inplace '.encryption.storagePath = "/encryption"' \
         "$hookshotConfigFile"
 
+    local asToken
+    local hsToken
+    if ! asToken="$(openssl rand -hex 32)" || \
+        ! hsToken="$(openssl rand -hex 32)"; then
+        echo "Failed to generate Hookshot tokens" >&2
+        exit 1
+    fi
+
     # Hookshot registration file
     cat <<EOT > "$hookshotRegistrationFile"
 ---
-as_token: hookshotastoken
+as_token: $asToken
 de.sorunome.msc2409.push_ephemeral: true
-hs_token: hookshothstoken
+hs_token: $hsToken
 id: hookshot
 namespaces:
   rooms: []
@@ -741,8 +831,11 @@ url: http://hookshot:9993
 EOT
 
     # Hookshot passkey
-    local passkeyB64="LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUpRZ0lCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQ1N3d2dna29BZ0VBQW9JQ0FRREUwS3V6djRXZTY0RTcKaGdJMjQ0RTdlVGZNd1hkL0VncFlSem9GWWZ2Vlh1TUYvdVE2THZVTXpuNG96MjhrNzlGOW5jS2taNy9Qa1NTbApZeWo2bGRYenFvVnZQVHZ6Um81WDJGSFBuMFdRdHVDOTBld2w1akYwV2F5S1JQYiswVGZGdHQ1dW9vTnA3dFEzCkhST0l0SzNEZ1dITDFKOEZia1dkQXJ2a3ZYYVQxcGMvNkcxV3NDUDNPR2U2cUhYdHdSRXdEQ3NFZFlEQW45M3kKOWRYNDRJblZOMWl0SENpWTkxQ3MyUHBTWXhab1d4Z2V1Q0NYUjJMRmY1RVhqbHU2eEQ3SU9OVEJoVGtPdlFYLwp1bktXeXNJNXBVWnA5bTJGRUxXT0pJV3NGTkJPOXVFVFdqMVVpVUZZMHZwckppRW13S05NM29CUGZBa0pQWk1vCmloQWNwcUZ2aEhvcmVFS3VKaExRWlNMK09kVmRYQWdMN2Q3UkVicTVsMndtKzFVRXQzdEdXeXhkMTZvY013WVUKQ0xBUUpKVS9tUm1qcWhiekg3cDJPSURtNWhkQ255UVFTOTAwT0cwOGZrNDlEakdBODkzUE5hUkYzUGlzalRRSApHRnpxQzJxRjVLOFV0bVpid1VVTXc4NkJHWnhnVnNlVWYyUGU4TVkxMUVHUTQvTGdtdW5zUXNGYkRHWFVLeVByCk4vY1IvbGdZSmVlUmQxcTFZbnVMK0lic3grSnFnUE9uS1dtVmtwUlZ2QTcyNUZZQy9WOGc3d2NkWlJCcEowYWMKYlZmbFdzNVpydVpaeFJZaVJEM3JSdmt6R1FDbCtiSkNIZHU3TElSRU5NUENLVjB3aXVuN0pWTUFOSEUxajNqYQpQTWFNcTNrRFh6ZmthWHo3V2tJVE10KzVDV2ltR1FJREFRQUJBb0lDQURiK04zdmFIL1B2eWdSZnhXNmcweE5UCkk0eEs0cURXNFowWkNkVkhNNTdEREp3NFJIMGRjY3RLUjJZUHovWjZMQWIxZGRXS1I4WXZ3QldXUjNUOU9QTUUKeXBQeWdEWFJtU1JpaFRtR1AySFlONlBTYkRHS3lIYkNON3ZLMlZrS0RKTnFMV3lzYkJ2RlovYWVZVDdwZlVRTApldEFCY1EyTGFsZ2MwM051blJ0aDhwRWcyS3hJTzBSd3Rrc3Bsd24vMEZXa2tNQ0dOSnVlRDk0N1lyWlB4ek9VCmEycXpXNFNpVmlCMTREdjFBK1hVemtDSElsUWkxaTVwSHBsK1paTWlFb2pQbUdNYVhuOEh3ZzFhZzNvdTNXWk8KRUFhN25JNTV4TUVhNDE3WjBmcStjTlYvZVhPTmhuelROcldKeWVtU0dnNzRmTkc0enEyT1R2Z2MyN09sdTZWMwpkQWRmZm1lMjFndGpHNU5WQlhQcDNKWnVIVWE2c3RaZUhraHR6SG15amkvL2Ezc1hDME1nNnpvM3RPcStEYk5uClEzVlRVSFFaRmNtQldMOXlHZEVVU1R1SnU2Y3JJTlR5OHhpN1VRS0tJSHBVRWZKYWluN0FPZHcrRFN6SllWTmgKclp1aTNUSWI5MTI5OUxCaGRMMWlmaUJsQkpHbzRYQS8rbENhNTBsOVNFaE14elcyeEJKcS96ZVJ1RDNvV3I2ZApCQ2RrYnJxTTY2OHpFR0szanBNMFRMUU12QmtRT3lMdnlNS3BwS0J4bitIbHV1RDRsQVg4Um9ScVVGZVdmdUR1CndLWTBMZUVqT29ETm5FYWYzSC9WZUZtNXVjaHN1Y3FJOGdzRTMyOGdncGhXUFhVKzJsaHJ6ZW1RVWNFV2hLVTMKMldnbklLcFR5QURqbU1xUElDZWhBb0lCQVFEME5mQ2ptUFJwa052cE1DbjM2UmtBd1NTeDhSZ0NzTmc0NHg1aQpLSFFMT0UzRWNnVkdLeFNpalZIWlZDQzM4Um9MU2NZcXVNK3VSLzdNdUR6N1pyMVZPZmJiRjJ4TElod3N4eWE5ClhqUld6bVFKMXl6bnZ3SFh4UDRucUlIOEd0RU9hY25VOU5XVGdCcitUdkh3Qng0cTJiV0UrSnNZRlNiUW1zZy8Kc2N6a1hablNHNnVpVk5WdXFEWVdacDJBTTFyelNJbldFbHdIdytEMjdGQ0NjTi9YOWhwbk5Ydll3MlNzMkJSWQplYWZLWTUxbHU4MHNmTXBibXJRb205Wm1FOUVnRjZ4T1RhNWtuVWdZU0ZXL1JzMWtoRFNuZ1k3NWVIbStnOWRZCjl2bGtqeWhBUzZNd1RGL3d3bGU5emZKZVQzY1RYenNoTmh3UmdnWEJEb2tKdFc3bkFvSUJBUURPVVA3eWpoekEKclZGTGJNRjF6aXRRYStyL3RSQ0VjcWluUnhHWnFpcnBxYmN5UDJaS0RkRmdMaDR3Q3RGTVVEODFJNjQwNmZJWgp2U09Od0dCbUI5S1luZkIzUlVQY29TRXBDbzhETDBMVzgyV0QrNGhtSFhjYzRHQ2ZtZmtHRGhvZkVHNGFlRWJjCmphd0ZiN09KUHU5UE9LYXQyZ0VkTksxNGZOWDlSNTAySWNYbU1uUzZIa21SMllFNWdDRzVMMzF6NVlucUhjQ2sKamxkNjErM3FLaVpNMWhEU0ZTYmN3MTFrREhheklGTkljM2ZUbWJzWFNtSzcxdGdLU2J0dHBmYUhaMkYxS1FIawoxVUhoYzJmY2lNQzd3d2lmeTZqUEpJU0dMYjV0MWFuSkt5c2Z4bktuR1cvZlJIaDBoZzlJREtRcXd0cENyR2JpCkRKamJsL09iVjZML0FvSUJBREp2Zlc1Y0pZWXoyNmNTUW1pbjVIa0thcWl4VVRNbEVOTFczU3lLakVUUThRYTAKUWJDWEx5RFBMT3RFZTZsaGl1NXY0eFJwck1LaXJkWGI2d1JFMks5a1ZENDFYVEU3THpSMFFPVDFNcndHemhSVwpNemo5Y3NUOE16MC9pUERuSE92c0h6bnpBclQrelJSZWU0c0YvVTMrUG9YaXppMHdHUjhXQ0d0WExpaXZ5QmZqCmpSUHVqMUhXUGExc3JmU1BKcVorQWJHTGd5UTdhUmUyQUg2Z0R5ckw4ZklFMHJvV3lKRUY0MVhPY2ovVFNPdDgKMk1mcVVlU1BVOHZiTzNGRGdIb3ZTVysyaldETU50cUUvZWlPRjljOWtwNVJuSlNiTkJHTHF3cjluczRNM3RSQQppc2hyelppc21uQmh1eitOQzl1ZFhGbmtrZkZ2dC82Q0lQMDNVbHNDZ2dFQWZPM0dzeEVpai9saTlJMFNTRWRqCkt2dHQvUkNpdzlDNkZ6Q05rOExhNFVxSFI4SGtLb3RiY1NYNzJaTnpVUVoyZjdMdlZkTWphanFCUU9Cd2Z0ZlYKeWR3NU03K1piQXVWak1oNytLMnhoMzh5eFV5V04xODROU0FZNGd2V0lyaC9VTGdlTTZFSko1d1J3ZWoxaWZHMQo3djZhejBMbTBjeUlEaUZwWWtqdkJVeEdEVElZUkdyNm1YcGZLWFpROVZXd1hYRnNwWHNHbjU0aGtwMFZ6MmxlCmI4QmZ4eFpQeGZYMm94SjQvZFpoRjhuemtRblJwRFRDdklOSHBsTW5UeW5qc2ZJRHJYSDdWNWxhbnkzR2dsKzgKZFBXUVQxSi9FWTlIUUFpSyt1OGFORm9UYnRZM3JyOVVZcG1QWnQrV2VVWk9VaVpUQzNSaGlCZWdwN2ZISnhWVgorUUtDQVFFQTBCOGpENWFtTFlEVlNmREtoWDN3Qm5nK2wvREw0UUpsdytnR3hBNDRJY1V2Q25FN3IvclhsM0s5CmRVZmFGUHNpZU4vdGZld0RFTmxyT3EvcnIrLzJTdHBmTlpvMUxSSlVsS2NTSmRodVpEU0JsMy9wL2tMdWxwNUQKVnhlQmRZbkdJeGZxZmxlMTdnSUxaNWRJZmt4a253dHJ0ZXEzMkZDNUhQZjl0YmdSL0l0YnRvSkp2NXdhTEdNTgorZkZOQzFhQ1FJSXZIQ0REZnMyR2VvRTZ0elRmUkRwRFNMdjh2QlVwSFFFbVZmOG5FYlhIaUM4dWQ0cGdkWVF6Cm1BSVpwL29TKzZiU0dOQ01sRzdhQ3J4QllhN003LzZ0RnhTNEc5NUpJTC95azVZTjRPL3hVQkRNcGdFWFdLZU8KS0VMS2IxcGo4Si9qcDVwUnA1QXR5RzJpTXd4RUtnPT0KLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLQ=="
-    echo "$passkeyB64" | base64 --decode > "$hookshotPasskeyFile"
+    if ! openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+        -outform PEM -out "$hookshotPasskeyFile" 2>/dev/null; then
+        echo "Failed to generate the Hookshot passkey" >&2
+        exit 1
+    fi
 
     podmanPermissions "$hookshotData" "991"
 }
@@ -757,13 +850,18 @@ function generateMasConfig {
     [[ -f "$masConfigFile" ]] && rm "$masConfigFile"
 
     # Use MAS' built-in executable to generate default config file
-    podman run --interactive --quiet --rm --tty "$masImage" \
-        config generate | grep -v INFO > "$masConfigFile"
+    if ! podman run --quiet --rm "$masImage" config generate \
+        > "$masConfigFile"; then
+        echo "Failed to generate the MAS config file" >&2
+        rm -f "$masConfigFile"
+        exit 1
+    fi
 
     yq --inplace 'del(.http.trusted_proxies)' "$masConfigFile"
     yq --inplace 'del(.http.listeners[0].binds[0])' "$masConfigFile"
     yq --inplace 'del(.database)' "$masConfigFile"
     export masManagement="https://$masHost:$listenPort"
+    export serverNameEnv="$serverName"
     export swaggerCallback="https://$masHost:$listenPort/api/doc/oauth2-callback"
     yq --inplace '
         .account.password_registration_email_required = false |
@@ -810,6 +908,7 @@ function generateMasConfig {
     ' "$masConfigFile"
 
     masSynapseConfig
+    podmanPermissions "$synapseData" "991"
 
     if [[ "$enableEmail" == true ]]; then
         export masEmailFrom="mas@$serverName"
@@ -828,13 +927,11 @@ function generateMasConfig {
 # Print Nginx headers for default reverse proxy
 function commonProxyHeaders {
     cat <<EOT
-        add_header Content-Security-Policy "frame-ancestors 'self'";
         add_header X-Content-Type-Options nosniff;
-        add_header X-Frame-Options SAMEORIGIN;
         add_header X-XSS-Protection "1; mode=block";
         client_max_body_size 50M;
         proxy_http_version 1.1;
-        proxy_set_header Host \$host:\$server_port;
+        proxy_set_header Host \$host:$listenPort;
         proxy_set_header X-Forwarded-For \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
 EOT
@@ -945,9 +1042,10 @@ EOT
         standardProxyServer "Adminer" "$adminerHost" \
         "adminer:8080" >> "$nginxConfigFile"
 
-    [[ "$enableKetesa" == true ]] && \
+    if [[ "$enableKetesa" == true ]]; then
         standardProxyServer "Ketesa" "$ketesaHost" \
         "ketesa:8080" >> "$nginxConfigFile"
+    fi
 }
 
 # Generate an SSL certificate
@@ -977,23 +1075,29 @@ function generateSynapseConfig {
     [[ -f "$synapseLogConfigFile" ]] && rm "$synapseLogConfigFile"
 
     # Use Synapse's built-in executable to generate default config files
-    podman run --entrypoint "/bin/bash" --interactive --rm --tty --volume \
-        "$synapseData":/data:Z "$synapseImage" \
-        -c "python3 -m synapse.app.homeserver \
-            --config-path /data/homeserver.yaml \
-            --data-directory /data \
-            --generate-config \
-            --report-stats no \
-            --server-name $serverName"
+    if ! podman run --entrypoint python3 --rm \
+        --volume "$synapseData":/data:Z "$synapseImage" \
+        -m synapse.app.homeserver \
+        --config-path /data/homeserver.yaml \
+        --data-directory /data \
+        --generate-config \
+        --report-stats no \
+        --server-name "$serverName"; then
+        echo "Failed to generate the Synapse config file" >&2
+        exit 1
+    fi
 
-    podmanPermissions "$synapseData" "991"
-
-    mv "$synapseGeneratedLogConfigFile" "$synapseLogConfigFile"
+    if ! mv "$synapseGeneratedLogConfigFile" "$synapseLogConfigFile"; then
+        echo "Failed to move the Synapse log config file" >&2
+        exit 1
+    fi
 
     # Customise Synapse config
     yq --inplace '.handlers.file.filename = "/data/homeserver.log"' \
         "$synapseLogConfigFile"
     yq --inplace 'del(.listeners[0].bind_addresses)' "$synapseConfigFile"
+    export synapseBaseUrl="https://$synapseHost:$listenPort/"
+    export synapseEnablePresenceEnv="$synapseEnablePresence"
     yq --inplace '
         .database.args.cp_max = 10 |
         .database.args.cp_min = 5 |
@@ -1009,6 +1113,7 @@ function generateSynapseConfig {
         .log_config = "/data/log.config.yaml" |
         .password_config.pepper = "s3cr3tP3pp3r" |
         .presence.enabled = env(synapseEnablePresenceEnv) |
+        .public_baseurl = env(synapseBaseUrl) |
         .suppress_key_server_warning = true |
         .trusted_key_servers[0].accept_keys_insecurely = true |
         .user_directory.enabled = true |
@@ -1050,7 +1155,11 @@ function generateSynapseConfig {
         ' "$synapseConfigFile"
     fi
 
-    [[ "$enableMas" == true ]] && masSynapseConfig
+    if [[ "$enableMas" == true ]]; then
+        masSynapseConfig
+    fi
+
+    podmanPermissions "$synapseData" "991"
 }
 
 # Print links
@@ -1069,7 +1178,7 @@ function printLinks {
         links+="\n- Adminer:             https://$adminerHost:$listenPort"
     [[ "$enableKetesa" == true ]] && \
         links+="\n- Ketesa:              https://$ketesaHost:$listenPort?\
-username=admin&password=admin&server=https://$synapseHost:$listenPort"
+username=admin&server=https://$synapseHost:$listenPort"
     [[ "$enableEmail" == true ]] && \
         links+="\n- Mailhog:             https://$mailhogHost:$listenPort"
 
@@ -1082,7 +1191,9 @@ function restartContainer {
     local restartNginx="$2"
 
     podman restart "$workDirBaseName-$containerName"
-    [[ "$restartNginx" == true ]] && podman restart "$workDirBaseName-nginx"
+    if [[ "$restartNginx" == true ]]; then
+        podman restart "$workDirBaseName-nginx"
+    fi
 }
 
 # Restart the MAS container
@@ -1097,12 +1208,20 @@ function restartMas {
 # Create/Start/Restart containers
 function restartAll {
     if [[ "$composeDash" == true ]]; then
-        podman-compose up --detach --force-recreate
+        podman-compose --project-name "$workDirBaseName" up --detach \
+            --force-recreate
     else
-        podman compose up --detach --force-recreate --remove-orphans
+        podman compose --project-name "$workDirBaseName" up --detach \
+            --force-recreate --remove-orphans
     fi
     restartContainer "nginx" false
 }
+
+# Help needs no programs or directories
+if [[ -z "$1" ]] || [[ "$1" == "help" ]]; then
+    help
+    exit 0
+fi
 
 # Run checks
 checkRequiredPrograms
